@@ -185,7 +185,8 @@ $RECYCLE.BIN/
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
+
 
 # Thumbnails
 ._*
@@ -206,3 +207,9 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+# PhysioNet/CinC 2020 Challenge Data
+data/*.tar.gz
+data/**/*.hea
+data/**/*.mat
+data/*.json
+data/SpeechCommands
