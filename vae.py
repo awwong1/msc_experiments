@@ -77,7 +77,7 @@ class VAE(pl.LightningModule):
         return {"log": log, "val_loss": val_loss}
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.SGD(self.parameters(), lr=self.lr)
 
 
 if __name__ == "__main__":
