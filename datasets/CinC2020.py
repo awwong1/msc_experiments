@@ -23,7 +23,7 @@ class CinC2020(Dataset):
         set_seq_len: Union[int, None] = None,
         fs: int = 500,
     ):
-        """Initialize te PhysioNet/CinC2020 Challenge Dataset
+        """Initialize the PhysioNet/CinC2020 Challenge Dataset
         root: base path containing extracted *.hea/*.mat files (default: "data")
         set_seq_len: Set length of returned tensors, for batching (default: full signal length)
         fs: Sampling frequency to return tensors as (default: 500)
@@ -43,6 +43,53 @@ class CinC2020(Dataset):
 
         # Generate fragment to idx mapping
         self.generate_index_record_map()
+
+    def __len__(self):
+        # return the sum of the index mapping range lengths
+        return sum([len(range(*v)) for v in self.name_map_idx.values()])
+
+    def __getitem__(self, idx: int):
+        """
+        p_signal.shape is (seq_len, num_channels)
+        Return: p_signal, sampling_rate, age, sex, dx
+        """
+        record_path = self.idx_map_name[idx]
+        idx_start, _idx_end = self.name_map_idx[record_path]
+
+        record = rdrecord(record_path)
+        age, sex, dx = parse_comments(record.comments)
+
+        p_signal = record.p_signal
+        sampling_rate = record.fs
+        fs_len = self.len_data[record_path]
+
+        if sampling_rate != self.fs:
+            # resample signal to match new sampling rate
+            p_signal = ss.resample(p_signal, fs_len, axis=0)
+
+        # calculate the offset of base signal according to idx
+        if self.set_seq_len is not None:
+            offset_idx = (idx - idx_start) * self.set_seq_len
+
+            # check for offset greater than set_seq_len (last index)
+            if offset_idx + self.set_seq_len > fs_len:
+                offset_idx = max(fs_len - self.set_seq_len, 0)
+
+            # check for partial sequence less than set_seq_len, pad
+            p_signal = p_signal[offset_idx : offset_idx + self.set_seq_len]
+            if len(p_signal) < self.set_seq_len:
+                pad_all = self.set_seq_len - len(p_signal)
+                pad_left = pad_all // 2
+                pad_right = pad_left + pad_all % 2
+
+                p_signal = np.pad(
+                    p_signal, [(pad_left, pad_right), (0, 0)], "constant", constant_values=0.0
+                )
+
+        # TODO: custom collate for multiple dx
+        dx = dx[0]
+
+        return p_signal.astype("float"), self.fs, age, sex, dx
 
     def generate_index_record_map(self):
         name_map_idx = {}
@@ -101,47 +148,3 @@ class CinC2020(Dataset):
             return record_fp, int(fs * duration)
         else:
             return record_fp, int(seq_len)
-
-    def __len__(self):
-        # return the sum of the index mapping range lengths
-        return sum([len(range(*v)) for v in self.name_map_idx.values()])
-
-    def __getitem__(self, idx: int):
-        """
-        p_signal.shape is (seq_len, num_channels)
-        Return: p_signal, sampling_rate, age, sex, dx
-        """
-        record_path = self.idx_map_name[idx]
-        idx_start, _idx_end = self.name_map_idx[record_path]
-
-        record = rdrecord(record_path)
-        age, sex, dx = parse_comments(record.comments)
-
-        p_signal = record.p_signal
-        sampling_rate = record.fs
-        fs_len = self.len_data[record_path]
-
-        if sampling_rate != self.fs:
-            # resample signal to match new sampling rate
-            p_signal = ss.resample(p_signal, fs_len, axis=0)
-
-        # calculate the offset of base signal according to idx
-        if self.set_seq_len is not None:
-            offset_idx = (idx - idx_start) * self.set_seq_len
-
-            # check for offset greater than set_seq_len (last index)
-            if offset_idx + self.set_seq_len > fs_len:
-                offset_idx = max(fs_len - self.set_seq_len, 0)
-
-            # check for partial sequence less than set_seq_len, pad
-            p_signal = p_signal[offset_idx : offset_idx + self.set_seq_len]
-            if len(p_signal) < self.set_seq_len:
-                pad_all = self.set_seq_len - len(p_signal)
-                pad_left = pad_all // 2
-                pad_right = pad_left + pad_all % 2
-
-                p_signal = np.pad(
-                    p_signal, [(pad_left, pad_right), (0, 0)],  "constant", constant_values=0.0
-                )
-
-        return p_signal, self.fs, age, sex, dx

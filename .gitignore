@@ -212,4 +212,8 @@ data/*.tar.gz
 data/**/*.hea
 data/**/*.mat
 data/*.json
+
+# Playground
 data/SpeechCommands
+data/MNIST
+lightning_logs

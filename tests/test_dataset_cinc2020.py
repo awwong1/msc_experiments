@@ -21,7 +21,8 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 53.0)
         self.assertEqual(sex, 0.0)
-        self.assertEqual(dx, [164867002, 427084000])
+        # self.assertEqual(dx, [164867002, 427084000])
+        self.assertEqual(dx, 164867002)
 
         # last
         p_signal, sampling_rate, age, sex, dx = self.ds_varlen[43100]
@@ -29,7 +30,8 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 61.0)
         self.assertEqual(sex, 1.0)
-        self.assertEqual(dx, [164865005, ])
+        # self.assertEqual(dx, [164865005, ])
+        self.assertEqual(dx, 164865005)
 
         # first
         p_signal, sampling_rate, age, sex, dx = self.ds_setlen[0]
@@ -37,7 +39,8 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 53.0)
         self.assertEqual(sex, 0.0)
-        self.assertEqual(dx, [164867002, 427084000])
+        # self.assertEqual(dx, [164867002, 427084000])
+        self.assertEqual(dx, 164867002)
 
         # last
         p_signal, sampling_rate, age, sex, dx = self.ds_setlen[71710]
@@ -45,7 +48,8 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 61.0)
         self.assertEqual(sex, 1.0)
-        self.assertEqual(dx, [164865005, ])
+        # self.assertEqual(dx, [164865005, ])
+        self.assertEqual(dx, 164865005)
 
         # first
         p_signal, sampling_rate, age, sex, dx = self.ds_setbiglen[0]
@@ -53,7 +57,8 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 53.0)
         self.assertEqual(sex, 0.0)
-        self.assertEqual(dx, [164867002, 427084000])
+        # self.assertEqual(dx, [164867002, 427084000])
+        self.assertEqual(dx, 164867002)
 
         # last
         p_signal, sampling_rate, age, sex, dx = self.ds_setbiglen[47827]
@@ -61,7 +66,8 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 61.0)
         self.assertEqual(sex, 1.0)
-        self.assertEqual(dx, [164865005, ])
+        # self.assertEqual(dx, [164865005, ])
+        self.assertEqual(dx, 164865005)
 
     def test_len_data_cache(self):
         self.assertCountEqual(self.ds_varlen.len_data.keys(), self.ds_varlen.ecg_records)
