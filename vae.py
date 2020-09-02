@@ -61,9 +61,8 @@ class BasicAutoEncoder(pl.LightningModule):
         return x_hat
 
     def loss_function(self, recon_x, x):
-        BCE = F.binary_cross_entropy_with_logits(recon_x, x, reduction="sum")
-
-        return BCE
+        # return F.binary_cross_entropy_with_logits(recon_x, x, reduction="sum")
+        return F.mse_loss(recon_x, x, reduction="mean")
 
     def forward(self, z):
         return self.decode(z)
@@ -94,7 +93,8 @@ class BasicAutoEncoder(pl.LightningModule):
         return {"log": log, "val_loss": val_loss}
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        # return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.SGD(self.parameters(), lr=self.lr)
 
 
 if __name__ == "__main__":
