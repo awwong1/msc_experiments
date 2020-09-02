@@ -27,15 +27,15 @@ class BasicAutoEncoder(pl.LightningModule):
 
         # encoding
         self.enc = nn.Sequential(
-            nn.Conv2d(in_channels=12, out_channels=24, kernel_size=(1, 2)),
+            nn.Conv2d(in_channels=12, out_channels=24, kernel_size=(26, 2)),
             nn.ReLU(),
-            nn.MaxPool2d(2),
+            nn.MaxPool2d((1, 2)),
         )
         # decoding
         self.dec = nn.Sequential(
-            nn.Upsample(scale_factor=2),
+            nn.Upsample(scale_factor=(1, 2)),
             nn.ConvTranspose2d(
-                in_channels=24, out_channels=12, kernel_size=(1, 2), stride=1
+                in_channels=24, out_channels=12, kernel_size=(26, 2), stride=1
             ),
             nn.ReLU(),
         )
