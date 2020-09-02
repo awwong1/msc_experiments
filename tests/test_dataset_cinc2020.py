@@ -1,4 +1,5 @@
 import unittest
+from torch.utils.data import DataLoader
 from datasets import CinC2020
 
 
@@ -73,3 +74,8 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertCountEqual(self.ds_varlen.len_data.keys(), self.ds_varlen.ecg_records)
         self.assertCountEqual(self.ds_setlen.len_data.keys(), self.ds_setlen.ecg_records)
         self.assertCountEqual(self.ds_setbiglen.len_data.keys(), self.ds_setbiglen.ecg_records)
+
+    def test_dataloader(self):
+        dl = DataLoader(self.ds_setlen, batch_size=16)
+        p_signal, sampling_rate, age, sex, dx = next(iter(dl))
+        self.assertEqual(p_signal.shape, (16, 5000, 12))
