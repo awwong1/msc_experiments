@@ -27,27 +27,17 @@ class BasicAutoEncoder(pl.LightningModule):
 
         # encoding
         self.enc = nn.Sequential(
-            # torch.Size([b, 12, 26, 201])
-            nn.Conv2d(in_channels=12, out_channels=24, kernel_size=(3, 2)),
+            nn.Conv2d(in_channels=12, out_channels=24, kernel_size=(1, 2)),
             nn.ReLU(),
-            # torch.Size([b, 24, 24, 200])
             nn.MaxPool2d(2),
-            # torch.Size([b, 24, 12, 100])
         )
         # decoding
         self.dec = nn.Sequential(
-            nn.ConvTranspose2d(
-                in_channels=24, out_channels=24, kernel_size=1, stride=1
-            ),
-            nn.ReLU(),
-            # torch.Size([b, 24, 12, 100])
             nn.Upsample(scale_factor=2),
-            # torch.Size([b, 24, 24, 200])
             nn.ConvTranspose2d(
-                in_channels=24, out_channels=12, kernel_size=(3, 2), stride=1
+                in_channels=24, out_channels=12, kernel_size=(1, 2), stride=1
             ),
             nn.ReLU(),
-            # torch.Size([b, 12, 26, 201])
         )
 
     def encode(self, x):
@@ -61,8 +51,8 @@ class BasicAutoEncoder(pl.LightningModule):
         return x_hat
 
     def loss_function(self, recon_x, x):
-        # return F.binary_cross_entropy_with_logits(recon_x, x, reduction="sum")
-        return F.mse_loss(recon_x, x, reduction="mean")
+        return F.binary_cross_entropy_with_logits(recon_x, x, reduction="mean")
+        # return F.mse_loss(recon_x, x, reduction="mean")
 
     def forward(self, z):
         return self.decode(z)
