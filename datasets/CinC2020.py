@@ -22,7 +22,7 @@ class CinC2020(Dataset):
         root: str = "data",
         set_seq_len: Union[int, None] = None,
         fs: int = 500,
-        clip_min_max: Union[tuple, None] = None,  # (-3, 3),
+        clip_min_max: Union[tuple, None] = (-3, 3),
         clean_signal: bool = True,
         standardize: bool = False,
         scale_0_1: bool = False
