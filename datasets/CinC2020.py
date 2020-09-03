@@ -22,10 +22,7 @@ class CinC2020(Dataset):
         root: str = "data",
         set_seq_len: Union[int, None] = None,
         fs: int = 500,
-        clip_min_max: Union[tuple, None] = (-3, 3),
         clean_signal: bool = True,
-        standardize: bool = False,
-        scale_0_1: bool = False
     ):
         """Initialize the PhysioNet/CinC2020 Challenge Dataset
         root: base path containing extracted *.hea/*.mat files (default: "data")
@@ -41,10 +38,7 @@ class CinC2020(Dataset):
         )
         self.set_seq_len = set_seq_len
         self.fs = fs
-        self.clip_min_max = clip_min_max
         self.clean_signal = clean_signal
-        self.standardize = standardize
-        self.scale_0_1 = scale_0_1
 
         root = os.path.expanduser(root)
         len_data_fp = os.path.join(root, f"fs_{fs}_lens.json")
@@ -55,6 +49,10 @@ class CinC2020(Dataset):
 
         # Generate fragment to idx mapping
         self.generate_index_record_map()
+
+        # Joblib caching of the __getitem__ call
+        self.memory = joblib.Memory(os.path.join(root, ".cache"), verbose=0, compress=True)
+        self._rdrecord = self.memory.cache(rdrecord)
 
     def __len__(self):
         # return the sum of the index mapping range lengths
@@ -68,7 +66,7 @@ class CinC2020(Dataset):
         record_path = self.idx_map_name[idx]
         idx_start, _idx_end = self.name_map_idx[record_path]
 
-        record = rdrecord(record_path)
+        record = self._rdrecord(record_path)
         age, sex, dx = parse_comments(record.comments)
 
         p_signal = record.p_signal
@@ -103,21 +101,6 @@ class CinC2020(Dataset):
         # clean the ecg signal
         if self.clean_signal:
             p_signal = CinC2020._clean_ecg_nk2(p_signal, sampling_rate=self.fs)
-
-        if self.clip_min_max:
-            # set the signal maximum and minimum bounds
-            p_signal = np.clip(p_signal, self.clip_min_max[0], self.clip_min_max[1], out=p_signal)
-
-        if self.standardize:
-            # z-score normalization
-            p_signal = (p_signal - np.mean(p_signal, axis=0)) / np.std(p_signal, axis=0)
-
-        if self.scale_0_1:
-            _, num_leads = p_signal.shape
-            p_signal = np.stack(
-                list(map(CinC2020._rescale_signal, [p_signal[:, li] for li in range(num_leads)])),
-                axis=1
-            )
 
         # set signal datatype to float32 (default was float64)
         p_signal = p_signal.astype(np.float32)

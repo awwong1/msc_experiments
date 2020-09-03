@@ -216,4 +216,5 @@ data/*.json
 # Playground
 data/SpeechCommands
 data/MNIST
+data/cifar-10-batches-py
 lightning_logs
