@@ -40,8 +40,8 @@ class CinC2020(Dataset):
         self.fs = fs
         self.clean_signal = clean_signal
 
-        root = os.path.expanduser(root)
-        len_data_fp = os.path.join(root, f"fs_{fs}_lens.json")
+        self.root = os.path.expanduser(root)
+        len_data_fp = os.path.join(self.root, f"fs_{fs}_lens.json")
 
         self.len_data = CinC2020._generate_record_length_cache(
             len_data_fp, fs, self.ecg_records
@@ -49,10 +49,6 @@ class CinC2020(Dataset):
 
         # Generate fragment to idx mapping
         self.generate_index_record_map()
-
-        # Joblib caching of the __getitem__ call
-        self.memory = joblib.Memory(os.path.join(root, ".cache"), verbose=0, compress=True)
-        self._rdrecord = self.memory.cache(rdrecord)
 
     def __len__(self):
         # return the sum of the index mapping range lengths
@@ -65,17 +61,11 @@ class CinC2020(Dataset):
         """
         record_path = self.idx_map_name[idx]
         idx_start, _idx_end = self.name_map_idx[record_path]
-
-        record = self._rdrecord(record_path)
-        age, sex, dx = parse_comments(record.comments)
-
-        p_signal = record.p_signal
-        sampling_rate = record.fs
         fs_len = self.len_data[record_path]
 
-        if sampling_rate != self.fs:
-            # resample signal to match new sampling rate
-            p_signal = ss.resample(p_signal, fs_len, axis=0)
+        p_signal, age, sex, dx = CinC2020.get_record_data(
+            record_path, fs_len, self.fs, clean_signal=self.clean_signal, root=self.root
+        )
 
         # calculate the offset of base signal according to idx
         if self.set_seq_len is not None:
@@ -98,9 +88,6 @@ class CinC2020(Dataset):
                     "constant",
                     constant_values=0.0,
                 )
-        # clean the ecg signal
-        if self.clean_signal:
-            p_signal = CinC2020._clean_ecg_nk2(p_signal, sampling_rate=self.fs)
 
         # set signal datatype to float32 (default was float64)
         p_signal = p_signal.astype(np.float32)
@@ -136,6 +123,46 @@ class CinC2020(Dataset):
         self.idx_map_name = RangeKeyDict(
             dict((v, k) for (k, v) in name_map_idx.items())
         )
+
+    @staticmethod
+    def get_record_data(
+        record_path: str,
+        fs_len: int,
+        fs_target: Union[int, float],
+        clean_signal: bool = True,
+        root: str = ""
+    ):
+        # Allow this to be cached to file
+        cache_file = os.path.join(root, ".cache", f"{record_path}.npz")
+        if os.path.isfile(cache_file):
+            with open(cache_file, "rb") as f:
+                p_signal = np.load(f)
+                age = np.load(f)
+                sex = np.load(f)
+                dx = np.load(f)
+        else:
+            record = rdrecord(record_path)
+            age, sex, dx = parse_comments(record.comments)
+
+            p_signal = record.p_signal
+            sampling_rate = record.fs
+
+            if sampling_rate != fs_target:
+                # resample signal to match new sampling rate
+                p_signal = ss.resample(p_signal, fs_len, axis=0)
+
+            if clean_signal:
+                # clean the ecg signal
+                p_signal = CinC2020._clean_ecg_nk2(p_signal, sampling_rate=fs_target)
+
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            with open(cache_file, "wb") as f:
+                np.save(f, p_signal)
+                np.save(f, age)
+                np.save(f, sex)
+                np.save(f, dx)
+
+        return p_signal, age, sex, dx
 
     @staticmethod
     def _rescale_signal(sig, clamp_range=(0, 1)):

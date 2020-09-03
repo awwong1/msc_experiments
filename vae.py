@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 from torch.utils.data import random_split
-
+import matplotlib.pyplot as plt
 from datasets import CinC2020
 
 
@@ -66,6 +67,7 @@ class BasicAutoEncoder(pl.LightningModule):
 
         self.lr = lr
         self.seq_len = seq_len
+        self.example_input_array = torch.rand(1, 12, 26, 201)
 
         self.to_spectrogram = torchaudio.transforms.Spectrogram(
             n_fft=n_fft, power=power, normalized=True
@@ -78,89 +80,100 @@ class BasicAutoEncoder(pl.LightningModule):
         self.enc = nn.Sequential(
             # torch.Size([b, 12, 26, 201])
             nn.Conv2d(
-                in_channels=12,
-                out_channels=24,
-                kernel_size=(26, 3),
-                stride=2,
-                padding=0,
-                groups=1,
+                in_channels=12, out_channels=24, kernel_size=(3, 4),
+                stride=1, padding=0, groups=1
             ),
-            nn.Softplus(),
-            # torch.Size([b, 24, 1, 100])
-            nn.Flatten(2, -1),
-            # torch.Size([b, 24, 100])
-            nn.Conv1d(
-                in_channels=24,
-                out_channels=48,
-                kernel_size=4,
-                stride=2,
-                padding=0,
-                groups=1,
+            nn.ReLU(),  
+            # torch.Size([b, 24, 24, 198])
+            nn.MaxPool2d(2),
+            # torch.Size([b, 24, 12, 99])
+            nn.Conv2d(
+                in_channels=24, out_channels=36, kernel_size=(3, 4),
+                stride=1, padding=0, groups=1
             ),
-            nn.Softplus()
-            # torch.Size([b, 48, 49])
+            nn.ReLU(),  
+            # torch.Size([b, 36, 10, 96])
+            nn.MaxPool2d(2),
+            # torch.Size([b, 36, 5, 48])
+            nn.Conv2d(
+                in_channels=36, out_channels=48, kernel_size=(3, 4),
+                stride=1, padding=0, groups=1
+            ),
+            nn.ReLU(),  
+            # torch.Size([b, 48, 3, 45])
         )
+
         # decoding
         self.dec = nn.Sequential(
-            nn.ConvTranspose1d(
-                in_channels=48,
-                out_channels=12,
-                kernel_size=32,
-                stride=2,
-                padding=0,
-                groups=1,
+            nn.ConvTranspose2d(
+                in_channels=48, out_channels=36, kernel_size=(3, 4),
+                stride=1, padding=0, groups=1
             ),
-            nn.Softplus(),
-            # torch.Size([b, 12, 128])
-            nn.Linear(128, 26 * 201),
-            # torch.Size([3, 12, 5226]),
-            # Unflatten(2, torch.Size((26, 201)))
+            nn.ReLU(),
+            # torch.Size([b, 36, 5, 48])
+            nn.Upsample(scale_factor=2),
+            # torch.Size([b, 36, 10, 96])
+            nn.ConvTranspose2d(
+                in_channels=36, out_channels=24, kernel_size=(3, 4),
+                stride=1, padding=0, groups=1
+            ),
+            nn.ReLU(),
+            # torch.Size([b, 24, 12, 99])
+            nn.Upsample(scale_factor=2),
+            # torch.Size([b, 24, 24, 198])
+            nn.ConvTranspose2d(
+                in_channels=24, out_channels=12, kernel_size=(3, 4),
+                stride=1, padding=0, groups=1
+            ),
             nn.Sigmoid(),
         )
-
-    def encode(self, x):
-        x = torch.transpose(x, 1, 2)
-        x_spec = self.to_spectrogram(x).detach()
-        return x_spec, self.enc(x_spec)
-
-    def decode(self, z):
-        x_hat = self.dec(z)
-        x_hat = x_hat.view(-1, 12, 26, 201)
-        # x_hat = torch.transpose(x_hat, 1, 2)
-        return x_hat
 
     def loss_function(self, recon_x, x):
         # WARNING! x may contain NaNs
         _x = x[~torch.isnan(x)]
         _recon_x = recon_x[~torch.isnan(x)]
 
-        # return F.binary_cross_entropy(recon_x, x, reduction="sum")
+        return F.binary_cross_entropy(_recon_x, _x, reduction="sum")
         # return F.binary_cross_entropy_with_logits(recon_x, x, reduction="sum")
-        return F.mse_loss(_recon_x, _x, reduction="sum")
+        # return F.mse_loss(_recon_x, _x, reduction="sum")
 
-    def forward(self, z):
-        return self.decode(z)
+    def forward(self, x_spec):
+        z = self.enc(x_spec)
+        x_hat = self.dec(z)
+        x_hat = x_hat.view(-1, 12, 26, 201)
+        return x_hat
 
     def training_step(self, batch, batch_idx):
         x, *_ = batch
 
-        x_spec, z = self.encode(x)
-        x_hat = self(z)
+        x = torch.transpose(x, 1, 2)
+        x_spec = self.to_spectrogram(x).detach()
+        x_hat = self(x_spec)
         loss = self.loss_function(x_hat, x_spec)
 
-        # only works with batch size 1, debugging
-        # source_grid = torchvision.utils.make_grid(torch.transpose(x_spec, 0, 1), nrow=1)
-        # self.logger.experiment.add_image("source_images", source_grid, batch_idx)
-        # gen_grid = torchvision.utils.make_grid(torch.transpose(x_hat, 0, 1), nrow=1)
-        # self.logger.experiment.add_image("generated_images", gen_grid, batch_idx)
+        if batch_idx % 7 == 0:
+            # every 7th batch, log spectrograms
+            _x_spec = x_spec.detach().cpu().numpy()
+            _x_reco = x_hat.detach().cpu().numpy()
 
-        # if torch.isnan(loss):
-        #     x_recon = x_hat.detach().cpu().numpy()
-        #     x_source = x_spec.detach().cpu().numpy()
-        #     with open("nan_loss.npy", "wb") as f:
-        #         np.save(f, x_recon)
-        #         np.save(f, x_source)
-        #     raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
+            _x_spec_img = np.concatenate(
+                [_x_spec[0, i, :, :].squeeze() for i in range(12)]
+            )
+            _x_reco_img = np.concatenate(
+                [_x_reco[0, i, :, :].squeeze() for i in range(12)]
+            )
+
+            fig, ax = plt.subplots(1, 2, figsize=(10, 11))
+            ax[0].set_title("Source")
+            im = ax[0].imshow(_x_spec_img)
+            fig.colorbar(im, ax=ax[0], orientation="horizontal")
+            ax[1].set_title("Generated")
+            im = ax[1].imshow(_x_reco_img)
+            fig.colorbar(im, ax=ax[1], orientation="horizontal")
+            fig.tight_layout()
+            self.logger.experiment.add_figure("train", fig, batch_idx)
+
+            plt.close(fig)
 
         log = {"train_loss": loss}
         return {"loss": loss, "log": log}
@@ -168,16 +181,22 @@ class BasicAutoEncoder(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, *_ = batch
 
-        x_spec, z = self.encode(x)
-        x_hat = self(z)
+        # convert signal to spectrogram input
+        x = torch.transpose(x, 1, 2)
+        x_spec = self.to_spectrogram(x).detach()
+        x_hat = self(x_spec)
         val_loss = self.loss_function(x_hat, x_spec)
+        # recon = torch.transpose(self.to_waveform(x_hat), 1, 2)
 
-        recon = torch.transpose(self.to_waveform(x_hat), 1, 2)
-        return {"val_loss": val_loss, "recon": recon}
+        payload = {"val_loss": val_loss}
+        if batch_idx == 0:
+            payload["sample"] = (x_spec, x_hat)
+        return payload
 
     def validation_epoch_end(self, outputs):
         val_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         log = {"avg_val_loss": val_loss}
+
         return {"log": log, "val_loss": val_loss}
 
     def configure_optimizers(self):
