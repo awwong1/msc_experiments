@@ -8,6 +8,7 @@ import torchaudio
 from torch.utils.data import random_split
 import matplotlib.pyplot as plt
 from datasets import CinC2020
+from utils import View
 
 
 class CinC2020DataModule(pl.LightningDataModule):
@@ -79,53 +80,27 @@ class BasicAutoEncoder(pl.LightningModule):
         # encoding
         self.enc = nn.Sequential(
             # torch.Size([b, 12, 26, 201])
-            nn.Conv2d(
-                in_channels=12, out_channels=24, kernel_size=(3, 4),
-                stride=1, padding=0, groups=1
-            ),
-            nn.ReLU(),  
-            # torch.Size([b, 24, 24, 198])
-            nn.MaxPool2d(2),
-            # torch.Size([b, 24, 12, 99])
-            nn.Conv2d(
-                in_channels=24, out_channels=36, kernel_size=(3, 4),
-                stride=1, padding=0, groups=1
-            ),
-            nn.ReLU(),  
-            # torch.Size([b, 36, 10, 96])
-            nn.MaxPool2d(2),
-            # torch.Size([b, 36, 5, 48])
-            nn.Conv2d(
-                in_channels=36, out_channels=48, kernel_size=(3, 4),
-                stride=1, padding=0, groups=1
-            ),
-            nn.ReLU(),  
-            # torch.Size([b, 48, 3, 45])
+            nn.Flatten(2, -1),
+            # torch.Size([b, 12, 5226])
+            nn.Linear(5226, 256),
+            nn.ReLU(),
+            # torch.Size([b, 12, 256])
+            nn.Linear(256, 64),
+            nn.ReLU()
+            # torch.Size([b, 12, 64])
         )
 
         # decoding
         self.dec = nn.Sequential(
-            nn.ConvTranspose2d(
-                in_channels=48, out_channels=36, kernel_size=(3, 4),
-                stride=1, padding=0, groups=1
-            ),
+            nn.Linear(64, 256),
             nn.ReLU(),
-            # torch.Size([b, 36, 5, 48])
-            nn.Upsample(scale_factor=2),
-            # torch.Size([b, 36, 10, 96])
-            nn.ConvTranspose2d(
-                in_channels=36, out_channels=24, kernel_size=(3, 4),
-                stride=1, padding=0, groups=1
-            ),
+            # torch.Size([b, 12, 256])
+            nn.Linear(256, 5226),
             nn.ReLU(),
-            # torch.Size([b, 24, 12, 99])
-            nn.Upsample(scale_factor=2),
-            # torch.Size([b, 24, 24, 198])
-            nn.ConvTranspose2d(
-                in_channels=24, out_channels=12, kernel_size=(3, 4),
-                stride=1, padding=0, groups=1
-            ),
-            nn.Sigmoid(),
+            # torch.Size([b, 12, 5226])
+            View((-1, 12, 26, 201)),
+            # torch.Size([b, 12, 26, 201])
+            # nn.Sigmoid(),
         )
 
     def loss_function(self, recon_x, x):
@@ -133,9 +108,11 @@ class BasicAutoEncoder(pl.LightningModule):
         _x = x[~torch.isnan(x)]
         _recon_x = recon_x[~torch.isnan(x)]
 
-        return F.binary_cross_entropy(_recon_x, _x, reduction="sum")
-        # return F.binary_cross_entropy_with_logits(recon_x, x, reduction="sum")
-        # return F.mse_loss(_recon_x, _x, reduction="sum")
+        return F.binary_cross_entropy_with_logits(
+            _recon_x, _x, reduction="sum"
+        )  # no sigmoid()
+        # return F.binary_cross_entropy(_recon_x, _x, reduction="sum") # set sigmoid()
+        # return F.mse_loss(_recon_x, _x, reduction="sum") # set sigmoid()
 
     def forward(self, x_spec):
         z = self.enc(x_spec)
@@ -154,6 +131,7 @@ class BasicAutoEncoder(pl.LightningModule):
         if batch_idx % 7 == 0:
             # every 7th batch, log spectrograms
             _x_spec = x_spec.detach().cpu().numpy()
+            # _x_reco = torch.sigmoid(x_hat).detach().cpu().numpy()
             _x_reco = x_hat.detach().cpu().numpy()
 
             _x_spec_img = np.concatenate(
@@ -174,6 +152,14 @@ class BasicAutoEncoder(pl.LightningModule):
             self.logger.experiment.add_figure("train", fig, batch_idx)
 
             plt.close(fig)
+
+        if torch.isnan(loss):
+            x_recon = x_hat.detach().cpu().numpy()
+            x_source = x_spec.detach().cpu().numpy()
+            with open("nan_loss.npy", "wb") as f:
+                np.save(f, x_recon)
+                np.save(f, x_source)
+            raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
 
         log = {"train_loss": loss}
         return {"loss": loss, "log": log}
