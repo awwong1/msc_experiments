@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 from torch.utils.data import random_split
+import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from datasets import CinC2020
 from utils import View
@@ -62,7 +63,7 @@ class BasicAutoEncoder(pl.LightningModule):
         seq_len=5000,
         n_fft: int = 50,
         power: float = 0.1,
-        normalized: bool = True,
+        normalized: bool = False,
     ):
         super().__init__()
 
@@ -71,7 +72,7 @@ class BasicAutoEncoder(pl.LightningModule):
         self.example_input_array = torch.rand(1, 12, 26, 201)
 
         self.to_spectrogram = torchaudio.transforms.Spectrogram(
-            n_fft=n_fft, power=power, normalized=True
+            n_fft=n_fft, power=power, normalized=normalized
         )
         self.to_waveform = torchaudio.transforms.GriffinLim(
             n_fft=n_fft, power=power, normalized=normalized
@@ -85,14 +86,14 @@ class BasicAutoEncoder(pl.LightningModule):
             nn.Linear(5226, 256),
             nn.ReLU(),
             # torch.Size([b, 12, 256])
-            nn.Linear(256, 64),
+            nn.Linear(256, 128),
             nn.ReLU()
-            # torch.Size([b, 12, 64])
+            # torch.Size([b, 12, 128])
         )
 
         # decoding
         self.dec = nn.Sequential(
-            nn.Linear(64, 256),
+            nn.Linear(128, 256),
             nn.ReLU(),
             # torch.Size([b, 12, 256])
             nn.Linear(256, 5226),
@@ -100,7 +101,7 @@ class BasicAutoEncoder(pl.LightningModule):
             # torch.Size([b, 12, 5226])
             View((-1, 12, 26, 201)),
             # torch.Size([b, 12, 26, 201])
-            # nn.Sigmoid(),
+            nn.Sigmoid(),
         )
 
     def loss_function(self, recon_x, x):
@@ -108,11 +109,11 @@ class BasicAutoEncoder(pl.LightningModule):
         _x = x[~torch.isnan(x)]
         _recon_x = recon_x[~torch.isnan(x)]
 
-        return F.binary_cross_entropy_with_logits(
-            _recon_x, _x, reduction="sum"
-        )  # no sigmoid()
+        # return F.binary_cross_entropy_with_logits(
+        #     _recon_x, _x, reduction="sum"
+        # )  # no sigmoid()
         # return F.binary_cross_entropy(_recon_x, _x, reduction="sum") # set sigmoid()
-        # return F.mse_loss(_recon_x, _x, reduction="sum") # set sigmoid()
+        return F.mse_loss(_recon_x, _x, reduction="sum")  # set sigmoid()
 
     def forward(self, x_spec):
         z = self.enc(x_spec)
@@ -123,35 +124,69 @@ class BasicAutoEncoder(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, *_ = batch
 
+        x[torch.isnan(x)] = 0.0
+
         x = torch.transpose(x, 1, 2)
         x_spec = self.to_spectrogram(x).detach()
         x_hat = self(x_spec)
         loss = self.loss_function(x_hat, x_spec)
 
-        if batch_idx % 7 == 0:
-            # every 7th batch, log spectrograms
+        if batch_idx % 557 == 0:
+            # Spectrograms
             _x_spec = x_spec.detach().cpu().numpy()
             # _x_reco = torch.sigmoid(x_hat).detach().cpu().numpy()
-            _x_reco = x_hat.detach().cpu().numpy()
+            _x_reco_spec = x_hat.detach().cpu().numpy()
 
             _x_spec_img = np.concatenate(
                 [_x_spec[0, i, :, :].squeeze() for i in range(12)]
             )
             _x_reco_img = np.concatenate(
-                [_x_reco[0, i, :, :].squeeze() for i in range(12)]
+                [_x_reco_spec[0, i, :, :].squeeze() for i in range(12)]
             )
 
-            fig, ax = plt.subplots(1, 2, figsize=(10, 11))
+            fig, ax = plt.subplots(1, 2, figsize=(10, 10))
             ax[0].set_title("Source")
-            im = ax[0].imshow(_x_spec_img)
+            im = ax[0].imshow(
+                _x_spec_img,
+                cmap="Greys",
+            )
+            ax[0].set_yticklabels([])
             fig.colorbar(im, ax=ax[0], orientation="horizontal")
             ax[1].set_title("Generated")
-            im = ax[1].imshow(_x_reco_img)
+            im = ax[1].imshow(
+                _x_reco_img,
+                cmap="Greys",
+                vmin=_x_spec_img.min(),
+                vmax=_x_spec_img.max()
+            )
+            ax[1].set_yticklabels([])
             fig.colorbar(im, ax=ax[1], orientation="horizontal")
             fig.tight_layout()
-            self.logger.experiment.add_figure("train", fig, batch_idx)
-
+            fig.suptitle(f"Epoch {self.current_epoch}, Batch {batch_idx}")
+            self.logger.experiment.add_figure("train_spec", fig, batch_idx)
             plt.close(fig)
+
+            # Signal
+            _x_sig = self.to_waveform(x_spec).detach().cpu().numpy()
+            _x_reco_sig = self.to_waveform(x_hat).detach().cpu().numpy()
+
+            sig_fig = plt.figure(constrained_layout=True, figsize=(10, 8))
+            spec = gridspec.GridSpec(ncols=2, nrows=12, figure=sig_fig)
+            ax = None
+            for i in range(12):
+                ax_sig = sig_fig.add_subplot(spec[i, 0])
+                ax_sig.set_xticklabels([])
+                ax_reco = sig_fig.add_subplot(spec[i, 1])
+                ax_reco.set_xticklabels([])
+                if i == 0:
+                    ax_sig.set_title("Source")
+                    ax_reco.set_title("Generated")
+                ax_sig.plot(_x_sig[0, i])
+                ax_reco.plot(_x_reco_sig[0, i])
+            spec.tight_layout(sig_fig)
+            sig_fig.suptitle(f"Epoch {self.current_epoch}, Batch {batch_idx}")
+            self.logger.experiment.add_figure("train_sig", sig_fig, batch_idx)
+            plt.close(sig_fig)
 
         if torch.isnan(loss):
             x_recon = x_hat.detach().cpu().numpy()
@@ -166,6 +201,8 @@ class BasicAutoEncoder(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, *_ = batch
+
+        x[torch.isnan(x)] = 0.0
 
         # convert signal to spectrogram input
         x = torch.transpose(x, 1, 2)
