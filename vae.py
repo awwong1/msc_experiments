@@ -59,7 +59,7 @@ class CinC2020DataModule(pl.LightningDataModule):
 class BasicAutoEncoder(pl.LightningModule):
     def __init__(
         self,
-        lr: float = 1e-3,
+        lr: float = 1e-2,
         seq_len=5000,
         n_fft: int = 50,
         power: float = 0.1,
@@ -68,6 +68,7 @@ class BasicAutoEncoder(pl.LightningModule):
         super().__init__()
 
         self.lr = lr
+
         self.seq_len = seq_len
         self.example_input_array = torch.rand(1, 12, 26, 201)
 
@@ -131,10 +132,18 @@ class BasicAutoEncoder(pl.LightningModule):
         x_hat = self(x_spec)
         loss = self.loss_function(x_hat, x_spec)
 
+        if torch.isnan(loss):
+            x_recon = x_hat.detach().cpu().numpy()
+            x_source = x_spec.detach().cpu().numpy()
+            with open("nan_loss.npy", "wb") as f:
+                np.save(f, x_recon)
+                np.save(f, x_source)
+            raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
+
         if batch_idx % 557 == 0:
+            # x_hat = torch.sigmoid(x_hat)  # only when bce_with_logits
             # Spectrograms
             _x_spec = x_spec.detach().cpu().numpy()
-            # _x_reco = torch.sigmoid(x_hat).detach().cpu().numpy()
             _x_reco_spec = x_hat.detach().cpu().numpy()
 
             _x_spec_img = np.concatenate(
@@ -157,7 +166,7 @@ class BasicAutoEncoder(pl.LightningModule):
                 _x_reco_img,
                 cmap="Greys",
                 vmin=_x_spec_img.min(),
-                vmax=_x_spec_img.max()
+                vmax=_x_spec_img.max(),
             )
             ax[1].set_yticklabels([])
             fig.colorbar(im, ax=ax[1], orientation="horizontal")
@@ -188,14 +197,6 @@ class BasicAutoEncoder(pl.LightningModule):
             self.logger.experiment.add_figure("train_sig", sig_fig, batch_idx)
             plt.close(sig_fig)
 
-        if torch.isnan(loss):
-            x_recon = x_hat.detach().cpu().numpy()
-            x_source = x_spec.detach().cpu().numpy()
-            with open("nan_loss.npy", "wb") as f:
-                np.save(f, x_recon)
-                np.save(f, x_source)
-            raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
-
         log = {"train_loss": loss}
         return {"loss": loss, "log": log}
 
@@ -223,8 +224,15 @@ class BasicAutoEncoder(pl.LightningModule):
         return {"log": log, "val_loss": val_loss}
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
-        # return torch.optim.SGD(self.parameters(), lr=self.lr)
+        # opt = torch.optim.Adam(self.parameters(), lr=self.lr)
+        opt = torch.optim.SGD(self.parameters(), lr=self.lr, momentum=0.9)
+        sched = torch.optim.lr_scheduler.CyclicLR(opt, base_lr=0.0001, max_lr=self.lr)
+        return [opt,], [
+            {
+                "scheduler": sched,
+                "interval": "step",
+            }
+        ]
 
 
 if __name__ == "__main__":
@@ -237,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument("--fs", default=500, type=int, help="default: 500")
     parser.add_argument("--train_workers", default=8, type=int, help="default: 8")
     parser.add_argument("--val_workers", default=4, type=int, help="default: 4")
-    parser.add_argument("--lr", default=1e-3, type=float, help="default 1e-3")
+    parser.add_argument("--lr", default=1e-2, type=float, help="default 1e-2")
 
     args = parser.parse_args()
 
@@ -249,5 +257,11 @@ if __name__ == "__main__":
         val_workers=args.val_workers,
     )
     model = BasicAutoEncoder(lr=args.lr, seq_len=args.seq_len)
-    trainer = pl.Trainer.from_argparse_args(args)
+
+    # log the learning rate
+    from pytorch_lightning.callbacks.lr_logger import LearningRateLogger
+
+    lr_logger = LearningRateLogger()
+
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=[lr_logger])
     trainer.fit(model, cinc2020)
