@@ -8,7 +8,7 @@ from wfdb import rdrecord
 import scipy.signal as ss
 import numpy as np
 
-from datasets.utils import parse_comments, walk_files, RangeKeyDict
+from datasets.utils import parse_comments, walk_files, RangeKeyDict, clean_ecg_nk2
 
 
 class CinC2020(Dataset):
@@ -153,7 +153,7 @@ class CinC2020(Dataset):
 
             if clean_signal:
                 # clean the ecg signal
-                p_signal = CinC2020._clean_ecg_nk2(p_signal, sampling_rate=fs_target)
+                p_signal = clean_ecg_nk2(p_signal, sampling_rate=fs_target)
 
             os.makedirs(os.path.dirname(cache_file), exist_ok=True)
             with open(cache_file, "wb") as f:
@@ -169,34 +169,6 @@ class CinC2020(Dataset):
         return np.interp(sig, (sig.min(), sig.max()), clamp_range)
 
     @staticmethod
-    def _clean_ecg_nk2(ecg_signal, sampling_rate=500):
-        """
-        Parallelized version of neurokit2 ecg_clean(method="neurokit")
-        ecg_signal shape should be (signal_length, number of leads)
-        """
-        # Remove slow drift with highpass Butterworth.
-        sos = ss.butter(
-            5,
-            (0.5,),
-            btype="highpass",
-            output="sos",
-            fs=sampling_rate,
-        )
-        clean = ss.sosfiltfilt(sos, ecg_signal, axis=0).T
-
-        # DC offset removal with 50hz powerline filter (convolve average kernel)
-        if sampling_rate >= 100:
-            b = np.ones(int(sampling_rate / 50))
-        else:
-            b = np.ones(2)
-        a = [
-            len(b),
-        ]
-        clean = np.copy(ss.filtfilt(b, a, clean, method="pad", axis=1).T)
-
-        return clean
-
-    @staticmethod
     def _generate_record_length_cache(len_data_fp: str, fs: int, ecg_records: list):
         _find_record_length = partial(CinC2020._find_record_length, fs=fs)
 
@@ -205,7 +177,7 @@ class CinC2020(Dataset):
                 len_data = json.load(f)
         else:
             len_data = dict(
-                joblib.Parallel(n_jobs=-1, verbose=0)(
+                joblib.Parallel(n_jobs=-1)(
                     joblib.delayed(_find_record_length)(ecg_record)
                     for ecg_record in ecg_records
                 )

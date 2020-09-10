@@ -211,6 +211,7 @@ Temporary Items
 data/*.tar.gz
 data/**/*.hea
 data/**/*.mat
+data/**/*.npz
 data/*.json
 
 # Playground

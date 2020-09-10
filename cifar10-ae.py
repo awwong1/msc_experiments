@@ -91,11 +91,11 @@ class CIFAR10AutoEncoder(pl.LightningModule):
         loss = F.binary_cross_entropy(reconstructed, x, reduction="sum")
         log = {"train_loss": loss}
 
-        if batch_idx % 10 == 0:
+        if batch_idx % 7 == 0:
             gen_grid = torchvision.utils.make_grid(reconstructed)
-            self.logger.experiment.add_image("generated_images", gen_grid, 0)
+            self.logger.experiment.add_image("generated_images", gen_grid, self.global_step)
             source_grid = torchvision.utils.make_grid(x)
-            self.logger.experiment.add_image("source_images", source_grid, 0)
+            self.logger.experiment.add_image("source_images", source_grid, self.global_step)
 
         return {"loss": loss, "log": log}
 
@@ -122,8 +122,8 @@ if __name__ == "__main__":
     parser = pl.Trainer.add_argparse_args(parser)
     parser.add_argument("--batch_size", default=64, type=int, help="default: 32")
     parser.add_argument("--lr", default=1e-3, type=float, help="default: 0.001")
-    parser.add_argument("--train_workers", default=8, type=float, help="default: 8")
-    parser.add_argument("--val_workers", default=4, type=float, help="default: 4")
+    parser.add_argument("--train_workers", default=8, type=int, help="default: 8")
+    parser.add_argument("--val_workers", default=4, type=int, help="default: 4")
 
     args = parser.parse_args()
 

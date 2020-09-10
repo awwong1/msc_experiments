@@ -34,3 +34,8 @@ if [ $? -eq 0 ]; then
 else
     echo "MD5SUM data integrity failed, abort extraction"
 fi
+
+# CLEANUP
+# These records containin all zero signals, delete them
+rm Training_2/Q0400.*
+rm Training_2/Q2961.*

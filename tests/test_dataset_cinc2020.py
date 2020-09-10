@@ -1,5 +1,7 @@
 import unittest
+
 from torch.utils.data import DataLoader
+
 from datasets import CinC2020
 
 
@@ -11,9 +13,9 @@ class CinC2020TestCase(unittest.TestCase):
         cls.ds_setbiglen = CinC2020(set_seq_len=20000)
 
     def test_len(self):
-        self.assertEqual(len(self.ds_varlen), 43101)
-        self.assertEqual(len(self.ds_setlen), 71711)
-        self.assertEqual(len(self.ds_setbiglen), 47828)
+        self.assertEqual(len(self.ds_varlen), 43099)
+        self.assertEqual(len(self.ds_setlen), 71709)
+        self.assertEqual(len(self.ds_setbiglen), 47826)
 
     def test_getitem(self):
         # first
@@ -26,7 +28,7 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(dx, 164867002)
 
         # last
-        p_signal, sampling_rate, age, sex, dx = self.ds_varlen[43100]
+        p_signal, sampling_rate, age, sex, dx = self.ds_varlen[len(self.ds_varlen) - 1]
         self.assertEqual(p_signal.shape, (60006, 12))
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 61.0)
@@ -44,7 +46,7 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(dx, 164867002)
 
         # last
-        p_signal, sampling_rate, age, sex, dx = self.ds_setlen[71710]
+        p_signal, sampling_rate, age, sex, dx = self.ds_setlen[len(self.ds_setlen) - 1]
         self.assertEqual(p_signal.shape, (5000, 12))
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 61.0)
@@ -62,7 +64,9 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(dx, 164867002)
 
         # last
-        p_signal, sampling_rate, age, sex, dx = self.ds_setbiglen[47827]
+        p_signal, sampling_rate, age, sex, dx = self.ds_setbiglen[
+            len(self.ds_setbiglen) - 1
+        ]
         self.assertEqual(p_signal.shape, (20000, 12))
         self.assertEqual(sampling_rate, 500)
         self.assertEqual(age, 61.0)
@@ -71,9 +75,15 @@ class CinC2020TestCase(unittest.TestCase):
         self.assertEqual(dx, 164865005)
 
     def test_len_data_cache(self):
-        self.assertCountEqual(self.ds_varlen.len_data.keys(), self.ds_varlen.ecg_records)
-        self.assertCountEqual(self.ds_setlen.len_data.keys(), self.ds_setlen.ecg_records)
-        self.assertCountEqual(self.ds_setbiglen.len_data.keys(), self.ds_setbiglen.ecg_records)
+        self.assertCountEqual(
+            self.ds_varlen.len_data.keys(), self.ds_varlen.ecg_records
+        )
+        self.assertCountEqual(
+            self.ds_setlen.len_data.keys(), self.ds_setlen.ecg_records
+        )
+        self.assertCountEqual(
+            self.ds_setbiglen.len_data.keys(), self.ds_setbiglen.ecg_records
+        )
 
     def test_dataloader(self):
         dl = DataLoader(self.ds_setlen, batch_size=16)

@@ -85,9 +85,11 @@ class BasicAutoEncoder(pl.LightningModule):
             nn.Flatten(2, -1),
             # torch.Size([b, 12, 5226])
             nn.Linear(5226, 256),
+            nn.Dropout(p=0.1),
             nn.ReLU(),
             # torch.Size([b, 12, 256])
             nn.Linear(256, 128),
+            nn.Dropout(p=0.1),
             nn.ReLU()
             # torch.Size([b, 12, 128])
         )
@@ -98,7 +100,6 @@ class BasicAutoEncoder(pl.LightningModule):
             nn.ReLU(),
             # torch.Size([b, 12, 256])
             nn.Linear(256, 5226),
-            nn.ReLU(),
             # torch.Size([b, 12, 5226])
             View((-1, 12, 26, 201)),
             # torch.Size([b, 12, 26, 201])
@@ -113,8 +114,8 @@ class BasicAutoEncoder(pl.LightningModule):
         # return F.binary_cross_entropy_with_logits(
         #     _recon_x, _x, reduction="sum"
         # )  # no sigmoid()
-        # return F.binary_cross_entropy(_recon_x, _x, reduction="sum") # set sigmoid()
-        return F.mse_loss(_recon_x, _x, reduction="sum")  # set sigmoid()
+        return F.binary_cross_entropy(_recon_x, _x, reduction="sum")  # set sigmoid()
+        # return F.mse_loss(_recon_x, _x, reduction="sum")  # set sigmoid()
 
     def forward(self, x_spec):
         z = self.enc(x_spec)
@@ -132,15 +133,15 @@ class BasicAutoEncoder(pl.LightningModule):
         x_hat = self(x_spec)
         loss = self.loss_function(x_hat, x_spec)
 
-        if torch.isnan(loss):
-            x_recon = x_hat.detach().cpu().numpy()
-            x_source = x_spec.detach().cpu().numpy()
-            with open("nan_loss.npy", "wb") as f:
-                np.save(f, x_recon)
-                np.save(f, x_source)
-            raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
+        # if torch.isnan(loss):
+        #     x_recon = x_hat.detach().cpu().numpy()
+        #     x_source = x_spec.detach().cpu().numpy()
+        #     with open("nan_loss.npy", "wb") as f:
+        #         np.save(f, x_recon)
+        #         np.save(f, x_source)
+        #     raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
 
-        if batch_idx % 557 == 0:
+        if batch_idx % 7 == 0:
             # x_hat = torch.sigmoid(x_hat)  # only when bce_with_logits
             # Spectrograms
             _x_spec = x_spec.detach().cpu().numpy()
@@ -172,7 +173,7 @@ class BasicAutoEncoder(pl.LightningModule):
             fig.colorbar(im, ax=ax[1], orientation="horizontal")
             fig.tight_layout()
             fig.suptitle(f"Epoch {self.current_epoch}, Batch {batch_idx}")
-            self.logger.experiment.add_figure("train_spec", fig, batch_idx)
+            self.logger.experiment.add_figure("train_spec", fig, self.global_step)
             plt.close(fig)
 
             # Signal
@@ -194,7 +195,7 @@ class BasicAutoEncoder(pl.LightningModule):
                 ax_reco.plot(_x_reco_sig[0, i])
             spec.tight_layout(sig_fig)
             sig_fig.suptitle(f"Epoch {self.current_epoch}, Batch {batch_idx}")
-            self.logger.experiment.add_figure("train_sig", sig_fig, batch_idx)
+            self.logger.experiment.add_figure("train_sig", sig_fig, self.global_step)
             plt.close(sig_fig)
 
         log = {"train_loss": loss}
@@ -245,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument("--fs", default=500, type=int, help="default: 500")
     parser.add_argument("--train_workers", default=8, type=int, help="default: 8")
     parser.add_argument("--val_workers", default=4, type=int, help="default: 4")
-    parser.add_argument("--lr", default=1e-2, type=float, help="default 1e-2")
+    parser.add_argument("--lr", default=1e-3, type=float, help="default 1e-3")
 
     args = parser.parse_args()
 

@@ -1,8 +1,8 @@
 import os
 import re
 from typing import Iterable, List, Tuple, Union
-from functools import reduce
 
+import scipy.signal as ss
 import numpy as np
 
 
@@ -75,6 +75,34 @@ def walk_files(
                     f = os.path.join(dirpath, f)
 
                 yield f
+
+
+def clean_ecg_nk2(ecg_signal, sampling_rate=500):
+    """
+    Parallelized version of neurokit2 ecg_clean(method="neurokit")
+    ecg_signal shape should be (signal_length, number of leads)
+    """
+    # Remove slow drift with highpass Butterworth.
+    sos = ss.butter(
+        5,
+        (0.5,),
+        btype="highpass",
+        output="sos",
+        fs=sampling_rate,
+    )
+    clean = ss.sosfiltfilt(sos, ecg_signal, axis=0).T
+
+    # DC offset removal with 50hz powerline filter (convolve average kernel)
+    if sampling_rate >= 100:
+        b = np.ones(int(sampling_rate / 50))
+    else:
+        b = np.ones(2)
+    a = [
+        len(b),
+    ]
+    clean = np.copy(ss.filtfilt(b, a, clean, method="pad", axis=1).T)
+
+    return clean
 
 
 class RangeKeyDict(dict):
