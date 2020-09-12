@@ -1,59 +1,15 @@
 #!/usr/bin/env python3
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
-from torch.utils.data import random_split
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
-from datasets import CinC2020
+
+from datasets import CinC2020DataModule
 from utils import View
-
-
-class CinC2020DataModule(pl.LightningDataModule):
-    def __init__(
-        self,
-        data_dir: str = "./data",
-        seq_len: int = 5000,
-        fs: int = 500,
-        batch_size: int = 32,
-        train_workers: int = 8,
-        val_workers: int = 4,
-    ):
-        super().__init__()
-        self.data_dir = data_dir
-        self.seq_len = seq_len
-        self.fs = fs
-        self.batch_size = batch_size
-        self.train_workers = train_workers
-        self.val_workers = val_workers
-
-    def setup(self, stage=None):
-        dataset = CinC2020(set_seq_len=self.seq_len, fs=self.fs)
-        train_len = int(len(dataset) * 0.8)  # 80% train, 20% validation
-        val_len = len(dataset) - train_len
-        train, val = random_split(dataset, [train_len, val_len])
-
-        self.train_ds = train
-        self.val_ds = val
-
-    def train_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.train_ds,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.train_workers,
-        )
-
-    def val_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.val_ds,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.val_workers,
-        )
 
 
 class BasicAutoEncoder(pl.LightningModule):

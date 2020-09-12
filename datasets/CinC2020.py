@@ -1,14 +1,16 @@
-import os
 import json
-from typing import Union
+import os
 from functools import partial
-import joblib
-from torch.utils.data import Dataset
-from wfdb import rdrecord
-import scipy.signal as ss
-import numpy as np
+from typing import Union
 
-from datasets.utils import parse_comments, walk_files, RangeKeyDict, clean_ecg_nk2
+import joblib
+import numpy as np
+import pytorch_lightning as pl
+import scipy.signal as ss
+from torch.utils.data import DataLoader, Dataset, random_split
+from wfdb import rdrecord
+
+from datasets.utils import RangeKeyDict, clean_ecg_nk2, parse_comments, walk_files
 
 
 class CinC2020(Dataset):
@@ -130,7 +132,7 @@ class CinC2020(Dataset):
         fs_len: int,
         fs_target: Union[int, float],
         clean_signal: bool = True,
-        root: str = ""
+        root: str = "",
     ):
         # Allow this to be cached to file
         cache_file = os.path.join(root, ".cache", f"{record_path}.npz")
@@ -198,3 +200,49 @@ class CinC2020(Dataset):
             return record_fp, int(fs * duration)
         else:
             return record_fp, int(seq_len)
+
+
+class CinC2020DataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        data_dir: str = "./data",
+        seq_len: int = 5000,
+        fs: int = 500,
+        batch_size: int = 32,
+        train_workers: int = 8,
+        val_workers: int = 4,
+        ratio_train: float = 0.8,
+    ):
+        super().__init__()
+        self.data_dir = data_dir
+        self.seq_len = seq_len
+        self.fs = fs
+        self.batch_size = batch_size
+        self.train_workers = train_workers
+        self.val_workers = val_workers
+        self.ratio_train = ratio_train
+
+    def setup(self, stage=None):
+        dataset = CinC2020(root=self.data_dir, set_seq_len=self.seq_len, fs=self.fs)
+        train_len = int(len(dataset) * self.ratio_train)
+        val_len = len(dataset) - train_len
+        train, val = random_split(dataset, [train_len, val_len])
+
+        self.train_ds = train
+        self.val_ds = val
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_ds,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.train_workers,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.val_workers,
+        )

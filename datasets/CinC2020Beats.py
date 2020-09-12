@@ -5,9 +5,11 @@ import warnings
 import joblib
 import neurokit2 as nk
 import numpy as np
+import pytorch_lightning as pl
 import scipy.signal as ss
+from sklearn.preprocessing import normalize
 from sklearn.neighbors import KernelDensity
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 from wfdb import rdrecord
 
 from datasets.utils import RangeKeyDict, clean_ecg_nk2, parse_comments, walk_files
@@ -25,6 +27,7 @@ class CinC2020Beats(Dataset):
         self,
         root: str = "data",
         pqrst_window_size: int = 400,
+        use_normalize: bool = True,
     ):
         """Initialize the PhysioNet/CinC2020 Challenge Dataset
         Beat dataloader, only returns isolated R-peak windows (heuristic average)
@@ -33,6 +36,7 @@ class CinC2020Beats(Dataset):
             walk_files(root, suffix=".hea", prefix=True, remove_suffix=True)
         )
         self.pqrst_window_size = pqrst_window_size
+        self.use_normalize = use_normalize
         self.root = os.path.expanduser(root)
 
         len_data_fp = os.path.join(root, f".cache_beat_{pqrst_window_size}_lens.json")
@@ -54,8 +58,14 @@ class CinC2020Beats(Dataset):
         offset_idx = idx - idx_start
         window = valid_windows[offset_idx]
 
+        # replace NaN with zeros
+        np.nan_to_num(window, copy=False)
+
         # set signal datatype to float32 (default was float64)
         window = window.astype(np.float32)
+
+        if self.use_normalize:
+            window = normalize(window.T).T
 
         # TODO: custom collate for multiple dx
         dx = dx[0]
@@ -67,8 +77,11 @@ class CinC2020Beats(Dataset):
         idx = 0
         for ecg_record in self.ecg_records:
             seq_len = self.len_data.get(ecg_record)
-            idx_start = idx
-            idx_end = idx_start + seq_len
+            try:
+                idx_start = idx
+                idx_end = idx_start + seq_len
+            except TypeError:
+                raise Exception(ecg_record)
             name_map_idx[ecg_record] = (int(idx_start), int(idx_end))
             idx = idx_end
         self.name_map_idx = name_map_idx
@@ -86,6 +99,7 @@ class CinC2020Beats(Dataset):
                     record_path, pqrst_window_size=pqrst_window_size, root=root
                 )
             except Exception:
+                # remove these from the dataset entirely!
                 raise Exception(record_path)
             return record_path, valid_windows.shape[0]
 
@@ -205,3 +219,50 @@ class CinC2020Beats(Dataset):
                 np.save(f, dx)
 
         return valid_windows, age, sex, dx
+
+
+class CinC2020BeatsDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        data_dir: str = "./data",
+        pqrst_window_size: int = 400,
+        batch_size: int = 32,
+        train_workers: int = 8,
+        val_workers: int = 4,
+        ratio_train: float = 0.8,
+    ):
+        super().__init__()
+        self.data_dir = data_dir
+        self.pqrst_window_size = pqrst_window_size
+        self.batch_size = batch_size
+        self.train_workers = train_workers
+        self.val_workers = val_workers
+        self.ratio_train = ratio_train
+
+    def setup(self, stage=None):
+        dataset = CinC2020Beats(
+            root=self.data_dir,
+            pqrst_window_size=self.pqrst_window_size,
+        )
+        train_len = int(len(dataset) * self.ratio_train)
+        val_len = len(dataset) - train_len
+        train, val = random_split(dataset, [train_len, val_len])
+
+        self.train_ds = train
+        self.val_ds = val
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_ds,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.train_workers,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.val_workers,
+        )

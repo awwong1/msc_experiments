@@ -74,7 +74,7 @@ def walk_files(
                 if prefix:
                     f = os.path.join(dirpath, f)
 
-                yield f
+                yield os.path.normpath(f)
 
 
 def clean_ecg_nk2(ecg_signal, sampling_rate=500):
