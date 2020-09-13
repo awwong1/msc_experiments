@@ -256,9 +256,13 @@ if __name__ == "__main__":
     # parser.add_argument("--embedding_dim", default=128, type=int, help="default 128")
 
     # args = parser.parse_args()
-
-    pruner = optuna.pruners.MedianPruner()  # optuna.pruners.NopPruner()
-    study = optuna.create_study(direction="minimize", pruner=pruner)
+    study = optuna.create_study(
+        study_name="Symmetric_Linear_BeatAutoencoder",
+        storage="sqlite:///optuna_symmetric_linear_bae.db",
+        direction="minimize",
+        pruner=optuna.pruners.MedianPruner(),  # optuna.pruners.NopPruner()
+        load_if_exists=True
+    )
     study.optimize(objective, n_jobs=8, n_trials=1, timeout=None)
 
     print("Number of finished trials: {}".format(len(study.trials)))
