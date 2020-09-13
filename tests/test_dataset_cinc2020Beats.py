@@ -6,7 +6,9 @@ from datasets import CinC2020Beats
 class CinC2020BeatsTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.ds_beat = CinC2020Beats()
+        cls.ds_beat = CinC2020Beats(pqrst_window_size=400)
+        ds_beat_300 = CinC2020Beats(pqrst_window_size=300)
+        ds_beat_500 = CinC2020Beats(pqrst_window_size=500)
 
     def test_len(self):
         self.assertEqual(len(self.ds_beat), 767097)
