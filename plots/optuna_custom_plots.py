@@ -334,7 +334,7 @@ def _make_hovertext(param_name: str, importance: float, study: Study) -> str:
     )
 
 
-def get_intermediate_plot(study: Study,max_experiments=10,num_trials_threshold=30,color_scale=None) -> "go.Figure":
+def get_intermediate_plot(study: Study,max_experiments=10,max_num_steps=30,color_scale=None) -> "go.Figure":
 
     layout = go.Layout(
         title="Intermediate Values Plot",
@@ -353,7 +353,7 @@ def get_intermediate_plot(study: Study,max_experiments=10,num_trials_threshold=3
         
     target_state = [TrialState.PRUNED, TrialState.COMPLETE, TrialState.RUNNING]
     trials = [trial for trial in study.trials if (trial.state in target_state) 
-              and (trial.value and trial.value<cut_off) and len(trial.intermediate_values)<num_trials_threshold]
+              and (trial.value and trial.value<cut_off) and len(trial.intermediate_values)<max_num_steps]
 
     if len(trials) == 0:
         _logger.warning("Study instance does not contain trials.")
