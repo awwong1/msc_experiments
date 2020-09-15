@@ -7,7 +7,7 @@ import neurokit2 as nk
 import numpy as np
 import pytorch_lightning as pl
 import scipy.signal as ss
-from sklearn.preprocessing import normalize
+from sklearn.preprocessing import normalize, MultiLabelBinarizer
 from sklearn.neighbors import KernelDensity
 from torch.utils.data import DataLoader, Dataset, random_split
 from wfdb import rdrecord
@@ -28,6 +28,7 @@ class CinC2020Beats(Dataset):
         root: str = "data",
         pqrst_window_size: int = 400,
         use_normalize: bool = True,
+        snomed_ct_map_fp: str = "data/snomed_ct_dx_map.json"
     ):
         """Initialize the PhysioNet/CinC2020 Challenge Dataset
         Beat dataloader, only returns isolated R-peak windows (heuristic average)
@@ -44,6 +45,12 @@ class CinC2020Beats(Dataset):
             len_data_fp, pqrst_window_size, self.ecg_records, root=self.root
         )
         self.generate_index_record_map()
+
+        with open(snomed_ct_map_fp, "r") as f:
+            self.code_mapping = json.load(f)
+        self.label_keys = sorted(list(map(int, self.code_mapping.keys())))
+        self.mlb = MultiLabelBinarizer(classes=self.label_keys)
+        self.mlb.fit(self.label_keys)
 
     def __len__(self):
         return sum([len(range(*v)) for v in self.name_map_idx.values()])
@@ -67,10 +74,9 @@ class CinC2020Beats(Dataset):
         if self.use_normalize:
             window = normalize(window.T).T
 
-        # TODO: custom collate for multiple dx
-        dx = dx[0]
+        sparse_dx = self.mlb.transform([dx,])
 
-        return window, age, sex, dx
+        return window, age, sex, sparse_dx
 
     def generate_index_record_map(self):
         name_map_idx = {}

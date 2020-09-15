@@ -10,7 +10,7 @@ from scipy.special import kl_div
 import optuna
 from optuna.integration import PyTorchLightningPruningCallback
 
-from datasets import CinC2020BeatsDataModule
+from datasets import NumpyLoaderDataModule
 from utils import View
 
 
@@ -129,7 +129,7 @@ class BeatAutoEncoder(pl.LightningModule):
         return x_hat
 
     def training_step(self, batch, batch_idx):
-        x, *_ = batch
+        x = batch
         x_hat = self(x)
         loss = self.loss_function(x_hat, x)
         kl_div = self.sum_kl_divergence(x_hat, x)
@@ -169,7 +169,7 @@ class BeatAutoEncoder(pl.LightningModule):
     #     return {"log": log}
 
     def validation_step(self, batch, batch_idx):
-        x, *_ = batch
+        x = batch
         x_hat = self(x)
         loss = self.loss_function(x_hat, x)
         kl_div = self.sum_kl_divergence(x_hat, x)
@@ -198,7 +198,8 @@ def objective(trial):
     MODEL_DIR = os.path.join(DIR, "result")
 
     lr = trial.suggest_loguniform('learning_rate', 1e-4, 1e-2)
-    pqrst_window_size = trial.suggest_categorical('pqrst_window_size', [300, 400, 500])
+    # pqrst_window_size = trial.suggest_categorical('pqrst_window_size', [300, 400, 500])
+    pqrst_window_size = 400
     hidden_dim = trial.suggest_int('hidden_dim', 64, 1024)
     embedding_dim = trial.suggest_int('embedding_dim', 64, 1024)
 
@@ -207,11 +208,11 @@ def objective(trial):
         os.path.join(MODEL_DIR, "trial_{}".format(trial.number), "{epoch}"), monitor="val_loss"
     )
 
-    cinc2020beat = CinC2020BeatsDataModule(
-        pqrst_window_size=pqrst_window_size,
-        batch_size=128,
-        train_workers=16,
-        val_workers=16,
+    cinc2020beat = NumpyLoaderDataModule(
+        numpy_file="cache_beat_400_windows.npy",
+        batch_size=256,
+        train_workers=4,
+        val_workers=4,
     )
     model = BeatAutoEncoder(
         lr=lr,
@@ -228,8 +229,8 @@ def objective(trial):
         # fast_dev_run=True,
         logger=False,
         checkpoint_callback=checkpoint_callback,
-        max_epochs=100,
-        gpus=4,
+        max_epochs=25,
+        gpus=1,
         callbacks=[metrics_callback],
         # distributed_backend="ddp",
         early_stop_callback=PyTorchLightningPruningCallback(trial, monitor="val_loss"),
@@ -263,7 +264,7 @@ if __name__ == "__main__":
         pruner=optuna.pruners.MedianPruner(),  # optuna.pruners.NopPruner()
         load_if_exists=True
     )
-    study.optimize(objective, n_jobs=8, n_trials=1, timeout=None)
+    study.optimize(objective, n_jobs=1, n_trials=100, timeout=None)
 
     print("Number of finished trials: {}".format(len(study.trials)))
 
