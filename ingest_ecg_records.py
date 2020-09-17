@@ -8,7 +8,8 @@ import numpy as np
 import scipy.signal as ss
 import wfdb
 import zarr
-from sklearn.neighbors import KernelDensity
+from sklearn.neighbors import KernelDensity, LocalOutlierFactor
+from sklearn.preprocessing import normalize
 
 from utils import clean_ecg_nk2, parse_comments, walk_files
 
@@ -25,11 +26,61 @@ print(f"Number of records to process: {len(record_files)}")
 # ONLY SET ONE OF THESE AT A TIME
 parse_raw = False  # FIRST
 parse_clean = False  # SECOND
-generate_beats = True  # THIRD
+generate_beats = False  # THIRD
+find_outlier_beats = True  # FOURTH
 
-if generate_beats:
-    window_size = 400  # RR Interval distance to resample for
+window_size = 400  # RR Interval distance to resample for
 
+if find_outlier_beats:
+    normalized_windows = beats.empty(
+        f"window_size_{window_size}_normalized",
+        shape=len(record_files),
+        dtype=object,
+        object_codec=numcodecs.VLenArray(np.float32),
+        chunks=10,
+        synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows_normalized"),
+    )
+    window_outlier = beats.empty(
+        f"window_size_{window_size}_outlier",
+        shape=len(record_files),
+        dtype=np.intc,
+        chunks=10,
+        synchronizer=zarr.ProcessSynchronizer(".zarr_beat_outlier"),
+    )
+
+    def _find_normalized_outlier(idx):
+        try:
+            windows = root[f"beats/window_size_{window_size}"][idx].reshape(
+                root[f"beats/window_size_{window_size}_shape"][idx], order="C"
+            )
+            # l2 normalize the windows
+            norm_windows = np.nan_to_num(windows)
+            norm_windows = np.transpose(
+                np.stack(
+                    list(map(normalize, np.transpose(norm_windows, axes=(0, 2, 1))))
+                ),
+                axes=(0, 2, 1),
+            )
+            normalized_windows[idx] = norm_windows.flatten()
+
+            # find the local outlier within the normalized windows
+            outlier_idx = 0  # only one beat extracted case
+            if len(norm_windows) > 1:
+                clf = LocalOutlierFactor(
+                    n_neighbors=max(1, min(len(norm_windows) - 1, len(norm_windows) // 2))
+                )
+                clf.fit_predict(norm_windows.reshape(len(norm_windows), -1))
+                outlier_idx = clf.negative_outlier_factor_.argmin()
+            window_outlier[idx] = outlier_idx
+        except Exception:
+            raise Exception(idx)
+
+    joblib.Parallel(n_jobs=-1, verbose=1, backend="multiprocessing")(
+        joblib.delayed(_find_normalized_outlier)(idx)
+        for idx in reversed(range(len(record_files)))
+    )
+
+elif generate_beats:
     r_peak_idxs = beats.empty(
         "r_peak_idxs",
         shape=len(record_files),
@@ -91,8 +142,13 @@ if generate_beats:
         sig_range = np.linspace(0, all_r_peaks_flat.max(), len(p_signal))[:, np.newaxis]
 
         # Find the peaks with bandwidth proportional to rough mean RR
+        mean_beats_detected = np.mean([len(r_peaks) for r_peaks in all_r_peaks])
         rough_meanrr = np.mean(
-            [np.diff(r_peaks).mean() for r_peaks in all_r_peaks if len(r_peaks) >= 2]
+            [
+                np.diff(r_peaks).mean()
+                for r_peaks in all_r_peaks
+                if len(r_peaks) >= 2 and len(r_peaks) >= mean_beats_detected
+            ]
         )
         kde = KernelDensity(bandwidth=rough_meanrr / 4).fit(all_r_peaks_flat)
         log_dens = kde.score_samples(sig_range)
@@ -142,7 +198,8 @@ if generate_beats:
         warnings.filterwarnings(action="ignore", message="Mean of empty slice")
 
         joblib.Parallel(n_jobs=-1, verbose=1, backend="multiprocessing")(
-            joblib.delayed(_generate_beats)(idx) for idx in reversed(range(len(record_files)))
+            joblib.delayed(_generate_beats)(idx)
+            for idx in reversed(range(len(record_files)))
         )
 
 elif parse_clean:
