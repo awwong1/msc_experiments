@@ -11,7 +11,7 @@ import zarr
 from sklearn.neighbors import KernelDensity, LocalOutlierFactor
 from sklearn.preprocessing import normalize
 
-from utils import clean_ecg_nk2, parse_comments, walk_files
+from utils import clean_ecg_nk2, parse_comments, walk_files, RangeKeyDict
 
 numcodecs.blosc.use_threads = False
 record_files = tuple(walk_files("data", suffix=".hea", prefix=True, remove_suffix=True))
@@ -20,6 +20,7 @@ root = zarr.group(store=store)
 raw = root.require_group("raw")
 cleaned = root.require_group("cleaned")
 beats = root.require_group("beats")
+meta = root.require_group("meta")
 
 print(f"Number of records to process: {len(record_files)}")
 
@@ -27,24 +28,80 @@ print(f"Number of records to process: {len(record_files)}")
 parse_raw = False  # FIRST, convert wfdb files into normal unit numpy arrays
 parse_clean = False  # SECOND, run nk2 signal cleaning
 generate_beats = False  # THIRD, run nk2 beat annotation and parse out raw windows
-find_outlier_beats = True  # FOURTH, run l2 normalization and sklearn outlier detector
+find_outlier_beats = False  # FOURTH, run l2 normalization and sklearn outlier detector
+flatten_beat_chunks = True  # FIFTH, improve load speed by storing beats/record
 
 window_size = 400  # RR Interval distance to resample for
 
-if find_outlier_beats:
+if flatten_beat_chunks:
+    window_meta = meta.empty(
+        f"record_idx_to_window_{window_size}_range",
+        shape=1,
+        dtype=object,
+        object_codec=numcodecs.JSON(),
+        chunks=1,
+    )
+    all_record_idxs = list(range(len(root[f"beats/window_size_{window_size}_shape"])))
+    beat_range_to_record_idx = {}
+    beat_idx_accum = 0
+    print("Creating beat_record maps...")
+    for record_idx, zarr_record_idx in enumerate(all_record_idxs):
+        num_beats, win_size, num_leads = map(int, root[f"beats/window_size_{window_size}_shape"][
+            zarr_record_idx
+        ])
+        beat_range_to_record_idx[
+            (beat_idx_accum, beat_idx_accum + num_beats)
+        ] = record_idx
+        beat_idx_accum += num_beats
+    num_beats = beat_idx_accum
+    beat_range_to_record_idx = RangeKeyDict(beat_range_to_record_idx)
+    # beat_range_to_record_idx = beat_range_to_record_idx
+    record_idx_to_beat_range = dict(
+        [(v, k) for (k, v) in beat_range_to_record_idx.items()]
+    )
+    window_meta[0] = record_idx_to_beat_range
+
+    print(f"Moving {num_beats} beats to flattened array store")
+    normalized_windows_flattened = beats.empty(
+        f"window_size_{window_size}_normalized_flattened",
+        shape=(num_beats, window_size, num_leads),
+        dtype=np.float32,
+        chunks=(1, None),
+        synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows_normalized_flattened"),
+    )
+
+    def _store_beat_window(idx):
+        record_idx = beat_range_to_record_idx[idx]
+        zarr_idx = all_record_idxs[record_idx]
+        l_offset, _ = record_idx_to_beat_range[record_idx]
+        beat_offset = idx - l_offset
+
+        beat_window = root[f"beats/window_size_{window_size}_normalized"][
+            zarr_idx
+        ].reshape(root[f"beats/window_size_{window_size}_shape"][zarr_idx])[
+            beat_offset
+        ]
+        normalized_windows_flattened[idx] = beat_window
+
+    joblib.Parallel(n_jobs=-1, verbose=1, backend="multiprocessing")(
+        joblib.delayed(_store_beat_window)(idx)
+        for idx in range(num_beats)
+    )
+
+elif find_outlier_beats:
     normalized_windows = beats.empty(
         f"window_size_{window_size}_normalized",
         shape=len(record_files),
         dtype=object,
         object_codec=numcodecs.VLenArray(np.float32),
-        chunks=10,
+        chunks=1,
         synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows_normalized"),
     )
     window_outlier = beats.empty(
         f"window_size_{window_size}_outlier",
         shape=len(record_files),
         dtype=np.intc,
-        chunks=10,
+        chunks=1,
         synchronizer=zarr.ProcessSynchronizer(".zarr_beat_outlier"),
     )
 
@@ -67,7 +124,9 @@ if find_outlier_beats:
             outlier_idx = 0  # only one beat extracted case
             if len(norm_windows) > 1:
                 clf = LocalOutlierFactor(
-                    n_neighbors=max(1, min(len(norm_windows) - 1, len(norm_windows) // 2))
+                    n_neighbors=max(
+                        1, min(len(norm_windows) - 1, len(norm_windows) // 2)
+                    )
                 )
                 clf.fit_predict(norm_windows.reshape(len(norm_windows), -1))
                 outlier_idx = clf.negative_outlier_factor_.argmin()
@@ -77,7 +136,7 @@ if find_outlier_beats:
 
     joblib.Parallel(n_jobs=-1, verbose=1, backend="multiprocessing")(
         joblib.delayed(_find_normalized_outlier)(idx)
-        for idx in reversed(range(len(record_files)))
+        for idx in range(len(record_files))
     )
 
 elif generate_beats:
@@ -86,7 +145,7 @@ elif generate_beats:
         shape=len(record_files),
         dtype=object,
         object_codec=numcodecs.JSON(),
-        chunks=10,
+        chunks=1,
         synchronizer=zarr.ProcessSynchronizer(".zarr_r_peak_idxs"),
     )
 
@@ -95,7 +154,7 @@ elif generate_beats:
         shape=len(record_files),
         dtype=object,
         object_codec=numcodecs.VLenArray(np.intc),
-        chunks=10,
+        chunks=1,
         synchronizer=zarr.ProcessSynchronizer(".zarr_valid_r_peak_idxs"),
     )
 
@@ -104,7 +163,7 @@ elif generate_beats:
         shape=len(record_files),
         dtype=object,
         object_codec=numcodecs.VLenArray(np.float32),
-        chunks=10,
+        chunks=1,
         synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows"),
     )
 
@@ -112,7 +171,7 @@ elif generate_beats:
         f"window_size_{window_size}_shape",
         shape=(len(record_files), 3),  # num_windows, window_size, num_leads
         dtype=np.intc,
-        chunks=10,
+        chunks=(1, 3),
         synchronizer=zarr.ProcessSynchronizer(".zarr_beat_window_shapes"),
     )
 
@@ -199,7 +258,7 @@ elif generate_beats:
 
         joblib.Parallel(n_jobs=-1, verbose=1, backend="multiprocessing")(
             joblib.delayed(_generate_beats)(idx)
-            for idx in reversed(range(len(record_files)))
+            for idx in range(len(record_files))
         )
 
 elif parse_clean:

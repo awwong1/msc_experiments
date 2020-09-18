@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import numpy as np
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
@@ -57,20 +58,24 @@ class Decoder(nn.Module):
 class BeatAutoEncoder(pl.LightningModule):
     def __init__(
         self,
-        lr: float = 1e-2,
+        base_lr: float = 1e-2,
+        max_lr: float = 1e-3,
         num_leads: int = 12,
         pqrst_window_size: int = 400,
         hidden_dim: int = 512,
         embedding_dim: int = 128,
+        dropout: float = 0.1,
     ):
         super().__init__()
 
-        self.lr = lr
+        self.base_lr = base_lr
+        self.max_lr = max_lr
         self.num_leads = num_leads
         self.pqrst_window_size = pqrst_window_size
         self.example_input_array = torch.rand(1, pqrst_window_size, num_leads)
         self.hidden_dim = hidden_dim
         self.embedding_dim = embedding_dim
+        self.dropout = dropout
 
         # encoding
         self.enc = Encoder(
@@ -78,6 +83,7 @@ class BeatAutoEncoder(pl.LightningModule):
             n_features=self.num_leads,
             hidden_dim=hidden_dim,
             embedding_dim=self.embedding_dim,
+            dropout=self.dropout,
         )
 
         # decoding
@@ -111,13 +117,13 @@ class BeatAutoEncoder(pl.LightningModule):
         x_hat = self(x)
         loss = self.loss_function(x_hat, x)
 
-        # if torch.isnan(loss):
-        #     x_recon = x_hat.detach().cpu().numpy()
-        #     x_source = x_spec.detach().cpu().numpy()
-        #     with open("nan_loss.npy", "wb") as f:
-        #         np.save(f, x_recon)
-        #         np.save(f, x_source)
-        #     raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
+        if torch.isnan(loss):
+            x_recon = x_hat.detach().cpu().numpy()
+            x_source = x.detach().cpu().numpy()
+            with open("nan_loss.npy", "wb") as f:
+                np.save(f, x_recon)
+                np.save(f, x_source)
+            raise Exception(f"NaN at epoch {self.current_epoch} batch_idx: {batch_idx}")
 
         if batch_idx % 37 == 0:
             _x = x.detach().cpu().numpy()
@@ -162,8 +168,10 @@ class BeatAutoEncoder(pl.LightningModule):
 
     def configure_optimizers(self):
         # opt = torch.optim.Adam(self.parameters(), lr=self.lr)
-        opt = torch.optim.SGD(self.parameters(), lr=self.lr, momentum=0.9)
-        sched = torch.optim.lr_scheduler.CyclicLR(opt, base_lr=0.0001, max_lr=self.lr)
+        opt = torch.optim.SGD(self.parameters(), lr=self.max_lr, momentum=0.9)
+        sched = torch.optim.lr_scheduler.CyclicLR(
+            opt, base_lr=self.base_lr, max_lr=self.max_lr
+        )
         return [opt,], [
             {
                 "scheduler": sched,
@@ -173,20 +181,42 @@ class BeatAutoEncoder(pl.LightningModule):
 
 
 if __name__ == "__main__":
-    from argparse import ArgumentParser
+    from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
-    parser = ArgumentParser()
+    parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser = pl.Trainer.add_argparse_args(parser)
+    parser.add_argument("--window_size", default=400, type=int, help="default: 400")
     parser.add_argument(
-        "--window_size", default=400, type=int, help="default: 400"
+        "--batch_size", default=32, type=int, help="Dataloader batch size"
     )
-    parser.add_argument("--batch_size", default=32, type=int, help="default: 32")
-    parser.add_argument("--train_workers", default=8, type=int, help="default: 8")
-    parser.add_argument("--val_workers", default=4, type=int, help="default: 4")
-    parser.add_argument("--test_workers", default=4, type=int, help="default: 4")
-    parser.add_argument("--lr", default=1e-3, type=float, help="default 1e-3")
-    parser.add_argument("--hidden_dim", default=512, type=int, help="default 512")
-    parser.add_argument("--embedding_dim", default=128, type=int, help="default 128")
+    parser.add_argument(
+        "--train_workers", default=8, type=int, help="Train dataloader workers"
+    )
+    parser.add_argument(
+        "--val_workers", default=4, type=int, help="Val dataloader workers"
+    )
+    parser.add_argument(
+        "--test_workers", default=4, type=int, help="Test dataloader workers"
+    )
+
+    parser.add_argument(
+        "--base_lr", default=1e-5, type=float, help="Cyclic base learning rate"
+    )
+    parser.add_argument(
+        "--max_lr", default=1e-3, type=float, help="Cyclic max learning rate"
+    )
+    parser.add_argument(
+        "--hidden_dim", default=512, type=int, help="Autoencoder hidden dimension"
+    )
+    parser.add_argument(
+        "--embedding_dim",
+        default=128,
+        type=int,
+        help="Autoencoder bottleneck dimension",
+    )
+    parser.add_argument(
+        "--dropout", default=0.1, type=float, help="Autoencoder dropout"
+    )
 
     args = parser.parse_args()
 
@@ -195,13 +225,15 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         train_workers=args.train_workers,
         val_workers=args.val_workers,
-        test_workers=args.test_workers
+        test_workers=args.test_workers,
     )
     model = BeatAutoEncoder(
-        lr=args.lr,
         pqrst_window_size=args.window_size,
+        base_lr=args.base_lr,
+        max_lr=args.max_lr,
+        dropout=args.dropout,
         hidden_dim=args.hidden_dim,
-        embedding_dim=args.embedding_dim
+        embedding_dim=args.embedding_dim,
     )
 
     # log the learning rate
@@ -212,3 +244,4 @@ if __name__ == "__main__":
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[lr_logger])
     trainer.logger.log_hyperparams(args)
     trainer.fit(model, cinc2020beat)
+    trainer.test(model)

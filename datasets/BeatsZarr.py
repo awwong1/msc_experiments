@@ -24,26 +24,38 @@ class BeatsZarr(Dataset):
     ):
         super().__init__()
         self.window_size = window_size
-        self.root = zarr.open_group(zarr_group_path, mode="r")
+        self.root = zarr.open_group(
+            zarr_group_path,
+            mode="r",
+            synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows_normalized"),
+        )
 
         # If the record_idxs is None, we want to use all of the available records
-        all_record_idxs = list(
+        self.all_record_idxs = list(
             range(len(self.root[f"beats/window_size_{self.window_size}_shape"]))
         )
         if record_idxs is None:
-            self.record_idxs = all_record_idxs
+            self.record_idxs = self.all_record_idxs
         else:
             # Check that all of the provided record idxs are in range
-            assert all(record_id in all_record_idxs for record_id in record_idxs)
-            self.record_idxs = record_idxs
+            assert all(record_id in self.all_record_idxs for record_id in record_idxs)
+            self.record_idxs = sorted(record_idxs)
 
         # Because each record may have multiple beats, create a map of beat_index to records
+        self.zarr_record_idxs_to_beat_idxs = self.root[
+            f"meta/record_idx_to_window_{self.window_size}_range"
+        ][0]
+        self.beat_idxs_to_zarr_record_idxs = RangeKeyDict(
+            dict(
+                [(tuple(v), int(k)) for (k, v) in self.zarr_record_idxs_to_beat_idxs.items()]
+            )
+        )
+
         beat_range_to_record_idx = {}
         beat_idx_accum = 0
         for record_idx, zarr_record_idx in enumerate(self.record_idxs):
-            num_beats, _win_size, _num_leads = self.root[
-                f"beats/window_size_{self.window_size}_shape"
-            ][zarr_record_idx]
+            bi_start, bi_end = self.zarr_record_idxs_to_beat_idxs[str(zarr_record_idx)]
+            num_beats = bi_end - bi_start
             beat_range_to_record_idx[
                 (beat_idx_accum, beat_idx_accum + num_beats)
             ] = record_idx
@@ -61,18 +73,20 @@ class BeatsZarr(Dataset):
     def __getitem__(self, idx):
         record_idx = self.beat_range_to_record_idx[idx]
         zarr_idx = self.record_idxs[record_idx]
+        zl_offset, _ = self.zarr_record_idxs_to_beat_idxs[str(zarr_idx)]
         l_offset, _ = self.record_idx_to_beat_range[record_idx]
         beat_offset = idx - l_offset
 
         # Return the beat window instance
-        beat_window = self.root[f"beats/window_size_{self.window_size}"][
-            zarr_idx
-        ].reshape(self.root[f"beats/window_size_{self.window_size}_shape"][zarr_idx])[
-            beat_offset
-        ]
+        beat_window = self.root[
+            f"beats/window_size_{self.window_size}_normalized_flattened"
+        ][zl_offset + beat_offset]
 
         # make writeable
-        return np.array(beat_window)
+        beat_window = np.array(beat_window)
+        # change all nan to 0
+        np.nan_to_num(beat_window, copy=False)
+        return beat_window
 
 
 class BeatsZarrDataModule(pl.LightningDataModule):
@@ -103,40 +117,45 @@ class BeatsZarrDataModule(pl.LightningDataModule):
         self.val_ratio = val_ratio
         self.test_ratio = test_ratio
 
+        self.train_records = None
+        self.val_records = None
+        self.test_records = None
+
     def setup(self, *args):
-        # determine how to split the zarr records
-        root = zarr.open_group(self.zarr_group_path, mode="r")
-        all_record_idxs = list(
-            range(len(root[f"beats/window_size_{self.window_size}_shape"]))
-        )
+        if self.train_records is None:
+            # determine how to split the zarr records
+            root = zarr.open_group(self.zarr_group_path, mode="r")
+            all_record_idxs = list(
+                range(len(root[f"beats/window_size_{self.window_size}_shape"]))
+            )
 
-        total_num_records = len(all_record_idxs)
-        num_train_records = int(total_num_records * self.train_ratio)
-        num_val_records = int(total_num_records * self.val_ratio)
-        num_test_records = total_num_records - num_train_records - num_val_records
+            total_num_records = len(all_record_idxs)
+            num_train_records = int(total_num_records * self.train_ratio)
+            num_val_records = int(total_num_records * self.val_ratio)
+            num_test_records = total_num_records - num_train_records - num_val_records
 
-        train_records, val_records, test_records = random_split(
-            all_record_idxs, [num_train_records, num_val_records, num_test_records]
-        )
-        self.train_records = train_records
-        self.val_records = val_records
-        self.test_records = test_records
+            train_records, val_records, test_records = random_split(
+                all_record_idxs, [num_train_records, num_val_records, num_test_records]
+            )
+            self.train_records = train_records
+            self.val_records = val_records
+            self.test_records = test_records
 
-        self.ds_train = BeatsZarr(
-            zarr_group_path=self.zarr_group_path,
-            window_size=self.window_size,
-            record_idxs=self.train_records,
-        )
-        self.ds_val = BeatsZarr(
-            zarr_group_path=self.zarr_group_path,
-            window_size=self.window_size,
-            record_idxs=self.val_records,
-        )
-        self.ds_test = BeatsZarr(
-            zarr_group_path=self.zarr_group_path,
-            window_size=self.window_size,
-            record_idxs=self.test_records,
-        )
+            self.ds_train = BeatsZarr(
+                zarr_group_path=self.zarr_group_path,
+                window_size=self.window_size,
+                record_idxs=self.train_records,
+            )
+            self.ds_val = BeatsZarr(
+                zarr_group_path=self.zarr_group_path,
+                window_size=self.window_size,
+                record_idxs=self.val_records,
+            )
+            self.ds_test = BeatsZarr(
+                zarr_group_path=self.zarr_group_path,
+                window_size=self.window_size,
+                record_idxs=self.test_records,
+            )
 
     def train_dataloader(self):
         return DataLoader(
