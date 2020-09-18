@@ -18,6 +18,34 @@ class View(nn.Module):
         return x.view(*self.shape)
 
 
+class RangeKeyDict(dict):
+    """Custom 'dictionary' for reverse lookup of range
+    """
+    def __init__(self, *args, **kwargs):
+        super(RangeKeyDict, self).__init__(*args, **kwargs)
+
+        # !any(!A or !B) is faster than all(A and B)
+        assert not any(
+            map(
+                lambda x: not isinstance(x, tuple) or len(x) != 2 or x[0] > x[1],
+                self,
+            )
+        )
+
+    def __getitem__(self, number):
+        try:
+            result = next(
+                (
+                    value
+                    for key, value in self.items()
+                    if key[0] <= number < key[1]
+                )
+            )
+        except StopIteration:
+            raise KeyError(number)
+        return result
+
+
 def clean_ecg_nk2(ecg_signal, sampling_rate=500):
     """
     Parallelized version of neurokit2 ecg_clean(method="neurokit")

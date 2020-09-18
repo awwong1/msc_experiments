@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 import matplotlib.pyplot as plt
-import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.special import kl_div
 
-from datasets import CinC2020BeatsDataModule
+from datasets import BeatsZarrDataModule
 from utils import View
 
 
@@ -102,12 +100,6 @@ class BeatAutoEncoder(pl.LightningModule):
         return F.mse_loss(_recon_x, _x, reduction="sum")  # set sigmoid()
         # return F.l1_loss(_recon_x, _x, reduction="sum")
 
-    @staticmethod
-    def sum_kl_divergence(recon_x, x):
-        _x = torch.sigmoid(x).detach().cpu().numpy()
-        _x_reco = torch.sigmoid(recon_x).detach().cpu().numpy()
-        return kl_div(_x, _x_reco).sum()
-
     def forward(self, x):
         z = self.enc(x)
         x_hat = self.dec(z)
@@ -115,10 +107,9 @@ class BeatAutoEncoder(pl.LightningModule):
         return x_hat
 
     def training_step(self, batch, batch_idx):
-        x, *_ = batch
+        x = batch
         x_hat = self(x)
         loss = self.loss_function(x_hat, x)
-        kl_div = self.sum_kl_divergence(x_hat, x)
 
         # if torch.isnan(loss):
         #     x_recon = x_hat.detach().cpu().numpy()
@@ -144,28 +135,30 @@ class BeatAutoEncoder(pl.LightningModule):
 
         log = {
             "train_loss": loss,
-            "train_kl_div": kl_div,
         }
-        return {"loss": loss, "log": log}  # "kl_div": kl_div,
-
-    # def train_epoch_end(self, outputs):
-    #     loss = torch.stack([x["loss"] for x in outputs]).mean()
-    #     kl_div = np.stack([x["kl_div"] for x in outputs]).mean()
-    #     log = {"avg_loss/train": loss, "avg_kl_div/train": kl_div}
-    #     return {"log": log}
+        return {"loss": loss, "log": log}
 
     def validation_step(self, batch, batch_idx):
-        x, *_ = batch
+        x = batch
         x_hat = self(x)
         loss = self.loss_function(x_hat, x)
-        kl_div = self.sum_kl_divergence(x_hat, x)
-        return {"val_loss": loss, "val_kl_div": kl_div}
+        return {"val_loss": loss}
 
     def validation_epoch_end(self, outputs):
         loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-        kl_div = np.stack([x["val_kl_div"] for x in outputs]).mean()
-        log = {"val_avg_loss": loss, "val_avg_kl_div": kl_div}
+        log = {"val_avg_loss": loss}
         return {"log": log, "val_loss": loss}
+
+    def test_step(self, batch, batch_idx):
+        x = batch
+        x_hat = self(x)
+        loss = self.loss_function(x_hat, x)
+        return {"test_loss": loss}
+
+    def test_epoch_end(self, outputs):
+        loss = torch.stack([x["test_loss"] for x in outputs]).mean()
+        log = {"test_avg_loss": loss}
+        return {"log": log, "test_loss": loss}
 
     def configure_optimizers(self):
         # opt = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -185,26 +178,28 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser = pl.Trainer.add_argparse_args(parser)
     parser.add_argument(
-        "--pqrst_window_size", default=400, type=int, help="default: 400"
+        "--window_size", default=400, type=int, help="default: 400"
     )
     parser.add_argument("--batch_size", default=32, type=int, help="default: 32")
     parser.add_argument("--train_workers", default=8, type=int, help="default: 8")
     parser.add_argument("--val_workers", default=4, type=int, help="default: 4")
+    parser.add_argument("--test_workers", default=4, type=int, help="default: 4")
     parser.add_argument("--lr", default=1e-3, type=float, help="default 1e-3")
     parser.add_argument("--hidden_dim", default=512, type=int, help="default 512")
     parser.add_argument("--embedding_dim", default=128, type=int, help="default 128")
 
     args = parser.parse_args()
 
-    cinc2020beat = CinC2020BeatsDataModule(
-        pqrst_window_size=args.pqrst_window_size,
+    cinc2020beat = BeatsZarrDataModule(
+        window_size=args.window_size,
         batch_size=args.batch_size,
         train_workers=args.train_workers,
         val_workers=args.val_workers,
+        test_workers=args.test_workers
     )
     model = BeatAutoEncoder(
         lr=args.lr,
-        pqrst_window_size=args.pqrst_window_size,
+        pqrst_window_size=args.window_size,
         hidden_dim=args.hidden_dim,
         embedding_dim=args.embedding_dim
     )

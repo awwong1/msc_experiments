@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from datasets import CinC2020
 
 
+@unittest.skip("Zarr replaces this!")
 class CinC2020TestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

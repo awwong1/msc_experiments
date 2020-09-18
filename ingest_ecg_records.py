@@ -24,10 +24,10 @@ beats = root.require_group("beats")
 print(f"Number of records to process: {len(record_files)}")
 
 # ONLY SET ONE OF THESE AT A TIME
-parse_raw = False  # FIRST
-parse_clean = False  # SECOND
-generate_beats = False  # THIRD
-find_outlier_beats = True  # FOURTH
+parse_raw = False  # FIRST, convert wfdb files into normal unit numpy arrays
+parse_clean = False  # SECOND, run nk2 signal cleaning
+generate_beats = False  # THIRD, run nk2 beat annotation and parse out raw windows
+find_outlier_beats = True  # FOURTH, run l2 normalization and sklearn outlier detector
 
 window_size = 400  # RR Interval distance to resample for
 
