@@ -27,7 +27,7 @@ class BeatsZarr(Dataset):
         self.root = zarr.open_group(
             zarr_group_path,
             mode="r",
-            synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows_normalized"),
+            # synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows_normalized"),
         )
 
         # If the record_idxs is None, we want to use all of the available records
@@ -117,45 +117,43 @@ class BeatsZarrDataModule(pl.LightningDataModule):
         self.val_ratio = val_ratio
         self.test_ratio = test_ratio
 
-        self.train_records = None
-        self.val_records = None
-        self.test_records = None
+        # determine how to split the zarr records
+        root = zarr.open_group(self.zarr_group_path, mode="r")
+        all_record_idxs = list(
+            range(len(root[f"beats/window_size_{self.window_size}_shape"]))
+        )
 
-    def setup(self, *args):
-        if self.train_records is None:
-            # determine how to split the zarr records
-            root = zarr.open_group(self.zarr_group_path, mode="r")
-            all_record_idxs = list(
-                range(len(root[f"beats/window_size_{self.window_size}_shape"]))
-            )
+        total_num_records = len(all_record_idxs)
+        num_train_records = int(total_num_records * self.train_ratio)
+        num_val_records = int(total_num_records * self.val_ratio)
+        num_test_records = total_num_records - num_train_records - num_val_records
 
-            total_num_records = len(all_record_idxs)
-            num_train_records = int(total_num_records * self.train_ratio)
-            num_val_records = int(total_num_records * self.val_ratio)
-            num_test_records = total_num_records - num_train_records - num_val_records
+        train_records, val_records, test_records = random_split(
+            all_record_idxs, [num_train_records, num_val_records, num_test_records]
+        )
+        self.train_records = train_records
+        self.val_records = val_records
+        self.test_records = test_records
 
-            train_records, val_records, test_records = random_split(
-                all_record_idxs, [num_train_records, num_val_records, num_test_records]
-            )
-            self.train_records = train_records
-            self.val_records = val_records
-            self.test_records = test_records
+        self.ds_train = BeatsZarr(
+            zarr_group_path=self.zarr_group_path,
+            window_size=self.window_size,
+            record_idxs=self.train_records,
+        )
+        self.ds_val = BeatsZarr(
+            zarr_group_path=self.zarr_group_path,
+            window_size=self.window_size,
+            record_idxs=self.val_records,
+        )
+        self.ds_test = BeatsZarr(
+            zarr_group_path=self.zarr_group_path,
+            window_size=self.window_size,
+            record_idxs=self.test_records,
+        )
 
-            self.ds_train = BeatsZarr(
-                zarr_group_path=self.zarr_group_path,
-                window_size=self.window_size,
-                record_idxs=self.train_records,
-            )
-            self.ds_val = BeatsZarr(
-                zarr_group_path=self.zarr_group_path,
-                window_size=self.window_size,
-                record_idxs=self.val_records,
-            )
-            self.ds_test = BeatsZarr(
-                zarr_group_path=self.zarr_group_path,
-                window_size=self.window_size,
-                record_idxs=self.test_records,
-            )
+        print(f"Train on {len(self.train_records)} records ({len(self.ds_train)} beats)")
+        print(f"Val on {len(self.val_records)} records ({len(self.ds_val)} beats)")
+        print(f"Test on {len(self.test_records)} records ({len(self.ds_test)} beats)")
 
     def train_dataloader(self):
         return DataLoader(
@@ -178,3 +176,10 @@ class BeatsZarrDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.test_workers,
         )
+
+    def data_config(self):
+        return {
+            "train_records": self.train_records,
+            "val_records": self.val_records,
+            "test_records": self.test_records
+        }
