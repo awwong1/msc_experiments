@@ -1,9 +1,9 @@
 import os
 import re
-import numpy as np
 from typing import Iterable, List, Tuple, Union
-import scipy.signal as ss
 
+import numpy as np
+import scipy.signal as ss
 import torch.nn as nn
 
 
@@ -19,8 +19,8 @@ class View(nn.Module):
 
 
 class RangeKeyDict(dict):
-    """Custom 'dictionary' for reverse lookup of range
-    """
+    """Custom 'dictionary' for reverse lookup of range"""
+
     def __init__(self, *args, **kwargs):
         super(RangeKeyDict, self).__init__(*args, **kwargs)
 
@@ -35,11 +35,7 @@ class RangeKeyDict(dict):
     def __getitem__(self, number):
         try:
             result = next(
-                (
-                    value
-                    for key, value in self.items()
-                    if key[0] <= number < key[1]
-                )
+                (value for key, value in self.items() if key[0] <= number < key[1])
             )
         except StopIteration:
             raise KeyError(number)
@@ -143,3 +139,57 @@ def walk_files(
                     f = os.path.join(dirpath, f)
 
                 yield os.path.normpath(f)
+
+
+def is_number(x):
+    try:
+        float(x)
+        return True
+    except ValueError:
+        return False
+
+
+# Load a table with row and column names.
+def load_weights_table(table_file):
+    # The table should have the following form:
+    #
+    # ,    a,   b,   c
+    # a, 1.2, 2.3, 3.4
+    # b, 4.5, 5.6, 6.7
+    # c, 7.8, 8.9, 9.0
+    #
+    table = list()
+    with open(table_file, "r") as f:
+        for i, l in enumerate(f):
+            arrs = [arr.strip() for arr in l.split(",")]
+            table.append(arrs)
+
+    # Define the numbers of rows and columns and check for errors.
+    num_rows = len(table) - 1
+    if num_rows < 1:
+        raise Exception("The table {} is empty.".format(table_file))
+
+    num_cols = set(len(table[i]) - 1 for i in range(num_rows))
+    if len(num_cols) != 1:
+        raise Exception(
+            "The table {} has rows with different lengths.".format(table_file)
+        )
+    num_cols = min(num_cols)
+    if num_cols < 1:
+        raise Exception("The table {} is empty.".format(table_file))
+
+    # Find the row and column labels.
+    rows = [table[0][j + 1] for j in range(num_rows)]
+    cols = [table[i + 1][0] for i in range(num_cols)]
+
+    # Find the entries of the table.
+    values = np.zeros((num_rows, num_cols))
+    for i in range(num_rows):
+        for j in range(num_cols):
+            value = table[i + 1][j + 1]
+            if is_number(value):
+                values[i, j] = float(value)
+            else:
+                values[i, j] = float("nan")
+
+    return rows, cols, values

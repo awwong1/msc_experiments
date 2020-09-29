@@ -128,28 +128,35 @@ class BeatsZarrDataModule(pl.LightningDataModule):
         num_val_records = int(total_num_records * self.val_ratio)
         num_test_records = total_num_records - num_train_records - num_val_records
 
-        train_records, val_records, test_records = random_split(
-            all_record_idxs, [num_train_records, num_val_records, num_test_records]
-        )
-        self.train_records = train_records
-        self.val_records = val_records
-        self.test_records = test_records
+        while True:
+            # random split may have dataset splits without necessary labels,
+            # repeat until success
+            try:
+                train_records, val_records, test_records = random_split(
+                    all_record_idxs, [num_train_records, num_val_records, num_test_records]
+                )
+                self.train_records = train_records
+                self.val_records = val_records
+                self.test_records = test_records
 
-        self.ds_train = BeatsZarr(
-            zarr_group_path=self.zarr_group_path,
-            window_size=self.window_size,
-            record_idxs=self.train_records,
-        )
-        self.ds_val = BeatsZarr(
-            zarr_group_path=self.zarr_group_path,
-            window_size=self.window_size,
-            record_idxs=self.val_records,
-        )
-        self.ds_test = BeatsZarr(
-            zarr_group_path=self.zarr_group_path,
-            window_size=self.window_size,
-            record_idxs=self.test_records,
-        )
+                self.ds_train = BeatsZarr(
+                    zarr_group_path=self.zarr_group_path,
+                    window_size=self.window_size,
+                    record_idxs=self.train_records,
+                )
+                self.ds_val = BeatsZarr(
+                    zarr_group_path=self.zarr_group_path,
+                    window_size=self.window_size,
+                    record_idxs=self.val_records,
+                )
+                self.ds_test = BeatsZarr(
+                    zarr_group_path=self.zarr_group_path,
+                    window_size=self.window_size,
+                    record_idxs=self.test_records,
+                )
+                break
+            except Exception:
+                continue
 
         print(f"Train on {len(self.train_records)} records ({len(self.ds_train)} beats)")
         print(f"Val on {len(self.val_records)} records ({len(self.ds_val)} beats)")

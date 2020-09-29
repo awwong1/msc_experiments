@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
@@ -71,23 +73,22 @@ class BeatAutoEncoder(pl.LightningModule):
         embedding_dim: int = 700,
         dropout: float = 0.1,
         momentum: float = 0.5,
-        batch_size: int = 512,
         **kwargs,
     ):
         super().__init__()
 
         self.save_hyperparameters()
 
+        self.example_input_array = torch.rand(1, pqrst_window_size, num_leads)
+
         self.base_lr = base_lr
         self.max_lr = max_lr
         self.num_leads = num_leads
         self.pqrst_window_size = pqrst_window_size
-        self.example_input_array = torch.rand(1, pqrst_window_size, num_leads)
         self.hidden_dim = hidden_dim
         self.embedding_dim = embedding_dim
         self.dropout = dropout
         self.momentum = momentum
-        self.batch_size = batch_size
 
         # encoding
         self.enc = Encoder(
@@ -108,9 +109,8 @@ class BeatAutoEncoder(pl.LightningModule):
         )
 
     def loss_function(self, recon_x, x):
-        return (
-            F.mse_loss(recon_x, x, reduction="sum") / self.batch_size
-        )
+        batch_size, *_ = x.shape
+        return F.mse_loss(recon_x, x, reduction="sum") / batch_size
         # WARNING! x may contain NaNs
         # _x = x[~torch.isnan(x)]
         # _recon_x = recon_x[~torch.isnan(x)]
@@ -254,16 +254,20 @@ if __name__ == "__main__":
         hidden_dim=args.hidden_dim,
         embedding_dim=args.embedding_dim,
         momentum=args.momentum,
-        batch_size=args.batch_size,
         data_config=cinc2020beat.data_config(),
+    )
+
+    # Custom logger output directory
+    logger = pl.loggers.TensorBoardLogger(
+        save_dir=os.getcwd(), name="log_beat_autoencoder"
     )
 
     # log the learning rate
     from pytorch_lightning.callbacks.lr_logger import LearningRateLogger
 
-    lr_logger = LearningRateLogger()
-
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=[lr_logger])
+    trainer = pl.Trainer.from_argparse_args(
+        args, logger=logger, callbacks=[LearningRateLogger()]
+    )
     trainer.logger.log_hyperparams(args)
     trainer.fit(model, cinc2020beat)
     trainer.test(model)
