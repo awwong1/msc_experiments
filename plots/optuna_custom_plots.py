@@ -37,8 +37,7 @@ from optuna.importance._base import BaseImportanceEvaluator
 
 #mine
 import numpy as np
-# study = optuna.create_study(study_name='Study_ALL',sampler=optuna.samplers.TPESampler(), 
-#                             pruner=optuna.pruners.HyperbandPruner(), storage='sqlite:///optuna_median.db',load_if_exists=True)
+
 def name_shortner(p_name):
         if "L2" in p_name:
             p_name="L2 Regular."
@@ -119,7 +118,6 @@ def get_parallel_coordinate_plot(study=None,coloring="blues",params= None,object
                 "colorscale": coloring,
                 "colorbar": {"title": objective_value},
                 "showscale": True,
-#                 "reversescale":True,
             },
         )
     ]
