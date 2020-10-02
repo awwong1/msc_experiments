@@ -144,8 +144,8 @@ class SequenceZarr(Dataset):
             # rescale such that min is 1
             # self.label_weights = label_weights / min(label_weights)
 
-            # rescale such that max is 1
-            self.label_weights = label_weights / (max(label_weights) / 1)
+            # rescale such that max is 2
+            self.label_weights = label_weights / (max(label_weights) / 2)
         return self.label_weights
 
     @staticmethod

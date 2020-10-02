@@ -12,29 +12,66 @@ from datasets import BeatsZarrDataModule
 from utils import View
 
 
+# class Encoder(nn.Module):
+#     def __init__(
+#         self, seq_len=400, n_features=12, hidden_dim=512, embedding_dim=128, dropout=0.1
+#     ):
+#         super(Encoder, self).__init__()
+#         self.seq_len = seq_len
+#         self.n_features = n_features
+#         self.hidden_dim = hidden_dim
+#         self.embedding_dim = embedding_dim
+#         self.dropout = dropout
+
+#         self.enc = nn.Sequential(
+#             nn.Flatten(1, -1),
+#             nn.Linear(self.seq_len * self.n_features, self.hidden_dim),
+#             nn.ReLU(True),
+#             nn.Dropout(p=self.dropout),
+#             nn.Linear(self.hidden_dim, self.embedding_dim),
+#             nn.ReLU(True),
+#             nn.Dropout(p=self.dropout),
+#         )
+
+#     def forward(self, x):
+#         return self.enc(x)
+
+
 class Encoder(nn.Module):
     def __init__(
-        self, seq_len=400, n_features=12, hidden_dim=512, embedding_dim=128, dropout=0.1
+        self,
+        seq_len: int = 400,
+        n_features: int = 12,
+        hidden_dim: int = -1,
+        dropout: float = 0.1,
+        embedding_dim: int = 386,
     ):
-        super(Encoder, self).__init__()
-        self.seq_len = seq_len
-        self.n_features = n_features
-        self.hidden_dim = hidden_dim
-        self.embedding_dim = embedding_dim
-        self.dropout = dropout
-
-        self.enc = nn.Sequential(
-            nn.Flatten(1, -1),
-            nn.Linear(self.seq_len * self.n_features, self.hidden_dim),
-            nn.ReLU(True),
-            nn.Dropout(p=self.dropout),
-            nn.Linear(self.hidden_dim, self.embedding_dim),
-            nn.ReLU(True),
-            nn.Dropout(p=self.dropout),
+        super().__init__()
+        # debugging
+        self.conv_block = nn.Sequential(
+            nn.Conv1d(12, 16, 164),
+            nn.BatchNorm1d(16),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Conv1d(16, 20, 128),
+            nn.BatchNorm1d(20),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Conv1d(20, 24, 64),
+            nn.BatchNorm1d(24),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
         )
+        # torch.Size([n, 24, 47]), 1128
+        self.embedder = nn.Sequential(nn.Flatten(), nn.Linear(1128, embedding_dim))
 
     def forward(self, x):
-        return self.enc(x)
+        # batch, window_len, num_channels
+        x = torch.transpose(x, 1, 2)
+        # batch, num_channels, window_len
+        out = self.conv_block(x)
+        out = self.embedder(out)
+        return out
 
 
 class Decoder(nn.Module):
@@ -235,7 +272,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dropout", default=0.1, type=float, help="Autoencoder dropout"
     )
-    parser.add_argument("--momentum", default=0.5, type=float, help="SGD momentum")
+    parser.add_argument("--momentum", default=0.9, type=float, help="SGD momentum")
 
     args = parser.parse_args()
 

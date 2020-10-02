@@ -66,12 +66,12 @@ class SequenceAutoEncoder(pl.LightningModule):
             num_layers=self.num_layers,
             dropout=self.lstm_dropout,
         )
-        self.lstm_dec = nn.LSTM(
-            input_size=self.embedding_dim,
-            hidden_size=self.embedding_dim,
-            num_layers=self.num_layers,
-            dropout=self.lstm_dropout,
-        )
+        # self.lstm_dec = nn.LSTM(
+        #     input_size=self.embedding_dim,
+        #     hidden_size=self.embedding_dim,
+        #     num_layers=self.num_layers,
+        #     dropout=self.lstm_dropout,
+        # )
 
         self.seq_classifier = nn.Sequential(
             nn.Linear(self.embedding_dim, self.hidden_size),
@@ -111,7 +111,7 @@ class SequenceAutoEncoder(pl.LightningModule):
         raw_seq_enc_input, _recon = zip(*map(self.beat_autoencoder, beat_windows))
         # lstm_input_lengths = [len(inp) for inp in raw_seq_enc_input]
 
-        max_seq_length = max(lstm_input_lengths)
+        # max_seq_length = max(lstm_input_lengths)
         # batch_size = len(raw_seq_enc_input)
 
         # pack variable length sequences for batched LSTM encoder training
@@ -126,33 +126,31 @@ class SequenceAutoEncoder(pl.LightningModule):
         seq_bottleneck = h_n[-1]  # equivalent to all commented out code
 
         # rebuild the input using lstm decoder
-        rebuild_hidden = torch.zeros_like(h_n), torch.zeros_like(c_n)
-        rebuild_next = torch.unsqueeze(seq_bottleneck, 0)
-        recon_seq = []
-        for idx in range(max_seq_length):
-            rebuild_next, rebuild_hidden = self.lstm_dec(rebuild_next, rebuild_hidden)
-            recon_seq.append(rebuild_next)
+        # rebuild_hidden = torch.zeros_like(h_n), torch.zeros_like(c_n)
+        # rebuild_next = torch.unsqueeze(seq_bottleneck, 0)
+        # recon_seq = []
+        # for idx in range(max_seq_length):
+        #     rebuild_next, rebuild_hidden = self.lstm_dec(rebuild_next, rebuild_hidden)
+        #     recon_seq.append(rebuild_next)
 
         # full reconstructed sequence, slice to batch beat window lengths
-        recon_seq = torch.cat(recon_seq, dim=0)
-        seq_dec_output = []
-        for idx, length in enumerate(lstm_input_lengths):
-            seq_dec_output.append(recon_seq[0:length, idx, :])
+        # recon_seq = torch.cat(recon_seq, dim=0)
+        # seq_dec_output = []
+        # for idx, length in enumerate(lstm_input_lengths):
+        #     seq_dec_output.append(recon_seq[0:length, idx, :])
         #         print(len(seq_dec_output))
         #         print([bwo.shape for bwo in seq_dec_output])
 
         pred_classes = self.seq_classifier(seq_bottleneck)
 
-        return pred_classes, seq_bottleneck, raw_seq_enc_input, seq_dec_output
+        return pred_classes, seq_bottleneck  # , raw_seq_enc_input, seq_dec_output
 
     def training_step(self, batch, batch_idx):
         beat_windows, seq_lens, dxs, str_abbrv_dxs, str_code_dxs = batch
-        pred_classes, _, x_source, x_hat = self(beat_windows, seq_lens)
-        emb_loss = self.emb_loss_function(x_hat, x_source)
-        class_loss = self.class_loss_function(
+        pred_classes, _ = self(beat_windows, seq_lens)
+        loss = self.class_loss_function(
             pred_classes, dxs, self.data_config["train_weights"]
         )
-        loss = emb_loss + class_loss
 
         # pr_curve calculations
         cpu_labels = dxs.detach().cpu()
@@ -166,8 +164,6 @@ class SequenceAutoEncoder(pl.LightningModule):
 
         log = {
             "train_loss": loss,
-            "train_emb_loss": emb_loss,
-            "train_class_loss": class_loss,
         }
         return {
             "loss": loss,
@@ -264,18 +260,14 @@ class SequenceAutoEncoder(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         beat_windows, seq_lens, dxs, _str_abbrv_dxs, str_code_dxs = batch
-        pred_classes, _, x_source, x_hat = self(beat_windows, seq_lens)
-        emb_loss = self.emb_loss_function(x_hat, x_source)
-        class_loss = self.class_loss_function(
+        pred_classes, _ = self(beat_windows, seq_lens)
+        loss = self.class_loss_function(
             pred_classes, dxs, self.data_config["val_weights"]
         )
-        loss = emb_loss + class_loss
         cpu_labels = dxs.detach().cpu()
         cpu_predictions = torch.sigmoid(pred_classes).detach().cpu()
         return {
             "val_loss": loss,
-            "val_emb_loss": emb_loss,
-            "val_class_loss": class_loss,
             "val_labels": cpu_labels,
             "val_raw_labels": str_code_dxs,
             "val_predictions": cpu_predictions,
@@ -283,8 +275,6 @@ class SequenceAutoEncoder(pl.LightningModule):
 
     def validation_epoch_end(self, outputs):
         loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-        emb_loss = torch.stack([x["val_emb_loss"] for x in outputs]).mean()
-        class_loss = torch.stack([x["val_class_loss"] for x in outputs]).mean()
 
         cpu_labels = torch.cat([x["val_labels"] for x in outputs])
         cpu_predictions = torch.cat([x["val_predictions"] for x in outputs])
@@ -321,8 +311,6 @@ class SequenceAutoEncoder(pl.LightningModule):
 
         log = {
             "val_avg_loss": loss,
-            "val_avg_emb_loss": emb_loss,
-            "val_avg_class_loss": class_loss,
         }
 
         # calculate metrics
@@ -383,12 +371,10 @@ class SequenceAutoEncoder(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         beat_windows, seq_lens, dxs, str_abbrv_dxs, str_code_dxs = batch
-        pred_classes, bottleneck, x_source, x_hat = self(beat_windows, seq_lens)
-        emb_loss = self.emb_loss_function(x_hat, x_source)
-        class_loss = self.class_loss_function(
+        pred_classes, bottleneck = self(beat_windows, seq_lens)
+        loss = self.class_loss_function(
             pred_classes, dxs, self.data_config["test_weights"]
         )
-        loss = emb_loss + class_loss
 
         # embed_x_source = torch.stack([s[:2, :] for s in x_source]).flatten(1)
         # embed_x_reco = torch.stack([s[:2, :] for s in x_hat]).flatten(1)
@@ -397,8 +383,6 @@ class SequenceAutoEncoder(pl.LightningModule):
 
         return {
             "test_loss": loss,
-            "test_emb_loss": emb_loss,
-            "test_class_loss": class_loss,
             "bottleneck_lstm": bottleneck,
             # "embed_x_source": embed_x_source,
             # "embed_x_reco": embed_x_reco,
@@ -409,8 +393,6 @@ class SequenceAutoEncoder(pl.LightningModule):
 
     def test_epoch_end(self, outputs):
         loss = torch.stack([x["test_loss"] for x in outputs]).mean()
-        emb_loss = torch.stack([x["test_emb_loss"] for x in outputs]).mean()
-        class_loss = torch.stack([x["test_class_loss"] for x in outputs]).mean()
         # cpu_labels = torch.cat([x["test_labels"] for x in outputs])
         cpu_predictions = torch.cat([x["test_predictions"] for x in outputs])
 
@@ -427,11 +409,7 @@ class SequenceAutoEncoder(pl.LightningModule):
             global_step=self.global_step,
         )
 
-        log = {
-            "test_loss": loss,
-            "test_emb_loss": emb_loss,
-            "test_class_loss": class_loss,
-        }
+        log = {"test_loss": loss}
 
         # calculate metrics
         raw_labels = []
@@ -473,7 +451,6 @@ class SequenceAutoEncoder(pl.LightningModule):
                 "test_challenge_metric": challenge_metric,
             }
         )
-        # print(self.label_thresholds)
 
         log_dir = self.logger.experiment.get_logdir()
         with open(os.path.join(log_dir, "test_output.json"), "w") as f:
@@ -490,7 +467,6 @@ class SequenceAutoEncoder(pl.LightningModule):
                 ",".join("{:.3f}".format(x) for x in f_measure_classes),
             )
             f.write(class_output_string)
-
         return {"log": log, "test_loss": loss}
 
     def configure_optimizers(self):
@@ -592,7 +568,7 @@ if __name__ == "__main__":
     # ==== Callbacks ====
     # Custom logger output directory
     logger = pl.loggers.TensorBoardLogger(
-        save_dir=os.getcwd(), name="log_sequence_autoencoder"
+        save_dir=os.getcwd(), name="log_sequence_classifier"
     )
     # Early stopping on validation classification metric
     early_stopping = EarlyStopping(
