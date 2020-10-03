@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import json
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,6 +8,8 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pytorch_lightning.callbacks.lr_logger import LearningRateLogger
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 from datasets import BeatsZarrDataModule
 from utils import View
@@ -217,6 +220,14 @@ class BeatAutoEncoder(pl.LightningModule):
     def test_epoch_end(self, outputs):
         loss = torch.stack([x["test_loss"] for x in outputs]).mean()
         log = {"test_avg_loss": loss}
+
+        log_dir = self.logger.experiment.get_logdir()
+        with open(os.path.join(log_dir, "test_output.json"), "w") as f:
+            test_output = {}
+            for k, v in log.items():
+                test_output[k] = float(v)
+            json.dump(test_output, f)
+
         return {"log": log, "test_loss": loss}
 
     def configure_optimizers(self):
@@ -298,12 +309,16 @@ if __name__ == "__main__":
     logger = pl.loggers.TensorBoardLogger(
         save_dir=os.getcwd(), name="log_beat_autoencoder"
     )
+    early_stopping = EarlyStopping(
+        monitor="val_loss", patience=3, verbose=True, mode="min"
+    )
 
     # log the learning rate
-    from pytorch_lightning.callbacks.lr_logger import LearningRateLogger
-
     trainer = pl.Trainer.from_argparse_args(
-        args, logger=logger, callbacks=[LearningRateLogger()]
+        args,
+        logger=logger,
+        callbacks=[LearningRateLogger(), early_stopping],
+        max_epochs=100,
     )
     trainer.logger.log_hyperparams(args)
     trainer.fit(model, cinc2020beat)

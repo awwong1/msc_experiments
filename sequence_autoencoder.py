@@ -599,12 +599,16 @@ if __name__ == "__main__":
         monitor="val_challenge_metric", patience=30, verbose=True, mode="max"
     )
     checkpointer = ModelCheckpoint(
-        monitor="val_challenge_metric", mode="max", verbose=True
+        filepath=logger.experiment.get_logdir(),
+        prefix="",
+        monitor="val_challenge_metric",
+        mode="max",
+        verbose=True,
     )
-
     trainer = pl.Trainer.from_argparse_args(
         args,
         logger=logger,
+        checkpoint_callback=checkpointer,
         callbacks=[LearningRateLogger(), early_stopping],
         max_epochs=200,
     )
