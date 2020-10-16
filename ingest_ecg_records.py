@@ -5,6 +5,7 @@ import joblib
 import neurokit2 as nk
 import numcodecs
 import numpy as np
+import pandas as pd
 import scipy.signal as ss
 import wfdb
 import zarr
@@ -21,6 +22,7 @@ raw = root.require_group("raw")
 cleaned = root.require_group("cleaned")
 beats = root.require_group("beats")
 meta = root.require_group("meta")
+cinc_mfe = root.require_group("cinc_mfe")  # mfe: manual feature extraction
 
 print(f"Number of records to process: {len(record_files)}")
 
@@ -29,11 +31,49 @@ parse_raw = False  # FIRST, convert wfdb files into normal unit numpy arrays
 parse_clean = False  # SECOND, run nk2 signal cleaning
 generate_beats = False  # THIRD, run nk2 beat annotation and parse out raw windows
 find_outlier_beats = False  # FOURTH, run l2 normalization and sklearn outlier detector
-flatten_beat_chunks = True  # FIFTH, improve load speed by storing beats/record
+flatten_beat_chunks = False  # FIFTH, improve load speed by storing beats/record
+replicate_old_mfe = True  # SIXTH, replicate prior work from CinC2020 paper
 
 window_size = 400  # RR Interval distance to resample for
 
-if flatten_beat_chunks:
+if replicate_old_mfe:
+    # https://github.com/awwong1/physionet-challenge-2020/blob/dd36e42e7803e7eb20e4bbaccbf4b29b57cf981d/neurokit2_parallel.py#L888
+    engineered_features = cinc_mfe.empty(
+        "all_cinc_2020_features",
+        shape=(len(record_files), 19334),  # idk y not 18950,
+        synchronizer=zarr.ProcessSynchronizer(".zarr_engineered_features"),
+    )
+    # submodule symlink and manual mapping
+    from utils.neurokit2_parallel import lead_to_feature_dataframe, ECG_LEAD_NAMES
+
+    def _engineer_features(idx):
+        raw_signal = root["raw/p_signal"][idx].reshape(
+            root["raw/p_signal_shape"][idx], order="C"
+        )
+        cleaned_signal = root["cleaned/p_signal"][idx].reshape(
+            root["raw/p_signal_shape"][idx], order="C"
+        )
+        age, sex, fs = root["raw/meta"][idx]
+
+        sig_len, num_leads = raw_signal.shape
+        record_features = joblib.Parallel(n_jobs=num_leads, verbose=0)(
+            joblib.delayed(lead_to_feature_dataframe)(
+                raw_signal[:, i], cleaned_signal[:, i], ECG_LEAD_NAMES[i], fs, None
+            )
+            for i in range(num_leads)
+        )
+        df = pd.concat(
+            [pd.DataFrame({"age": (age,), "sex": (sex,)})] + record_features, axis=1
+        )
+        engineered_features[idx] = df.to_numpy()[0]
+
+    joblib.Parallel(n_jobs=16, verbose=1, backend="multiprocessing")(
+        joblib.delayed(_engineer_features)(idx)
+        for idx in range(len(record_files))
+    )
+
+
+elif flatten_beat_chunks:
     window_meta = meta.empty(
         f"record_idx_to_window_{window_size}_range",
         shape=1,
@@ -46,9 +86,9 @@ if flatten_beat_chunks:
     beat_idx_accum = 0
     print("Creating beat_record maps...")
     for record_idx, zarr_record_idx in enumerate(all_record_idxs):
-        num_beats, win_size, num_leads = map(int, root[f"beats/window_size_{window_size}_shape"][
-            zarr_record_idx
-        ])
+        num_beats, win_size, num_leads = map(
+            int, root[f"beats/window_size_{window_size}_shape"][zarr_record_idx]
+        )
         beat_range_to_record_idx[
             (beat_idx_accum, beat_idx_accum + num_beats)
         ] = record_idx
@@ -67,7 +107,9 @@ if flatten_beat_chunks:
         shape=(num_beats, window_size, num_leads),
         dtype=np.float32,
         chunks=(1, None),
-        synchronizer=zarr.ProcessSynchronizer(".zarr_beat_windows_normalized_flattened"),
+        synchronizer=zarr.ProcessSynchronizer(
+            ".zarr_beat_windows_normalized_flattened"
+        ),
     )
 
     def _store_beat_window(idx):
@@ -78,14 +120,11 @@ if flatten_beat_chunks:
 
         beat_window = root[f"beats/window_size_{window_size}_normalized"][
             zarr_idx
-        ].reshape(root[f"beats/window_size_{window_size}_shape"][zarr_idx])[
-            beat_offset
-        ]
+        ].reshape(root[f"beats/window_size_{window_size}_shape"][zarr_idx])[beat_offset]
         normalized_windows_flattened[idx] = beat_window
 
     joblib.Parallel(n_jobs=-1, verbose=1, backend="multiprocessing")(
-        joblib.delayed(_store_beat_window)(idx)
-        for idx in range(num_beats)
+        joblib.delayed(_store_beat_window)(idx) for idx in range(num_beats)
     )
 
 elif find_outlier_beats:
@@ -257,8 +296,7 @@ elif generate_beats:
         warnings.filterwarnings(action="ignore", message="Mean of empty slice")
 
         joblib.Parallel(n_jobs=-1, verbose=1, backend="multiprocessing")(
-            joblib.delayed(_generate_beats)(idx)
-            for idx in range(len(record_files))
+            joblib.delayed(_generate_beats)(idx) for idx in range(len(record_files))
         )
 
 elif parse_clean:
