@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import warnings
+import json
 
 import joblib
 import neurokit2 as nk
@@ -37,39 +38,60 @@ replicate_old_mfe = True  # SIXTH, replicate prior work from CinC2020 paper
 window_size = 400  # RR Interval distance to resample for
 
 if replicate_old_mfe:
-    # https://github.com/awwong1/physionet-challenge-2020/blob/dd36e42e7803e7eb20e4bbaccbf4b29b57cf981d/neurokit2_parallel.py#L888
     engineered_features = cinc_mfe.empty(
-        "all_cinc_2020_features",
-        shape=(len(record_files), 19334),  # idk y not 18950,
+        "top_1000_cinc_2020_features",
+        shape=(len(record_files), 1000),
+        chunks=(1, 1000),
         synchronizer=zarr.ProcessSynchronizer(".zarr_engineered_features"),
     )
     # submodule symlink and manual mapping
-    from utils.neurokit2_parallel import lead_to_feature_dataframe, ECG_LEAD_NAMES
+    from utils.neurokit2_parallel import (
+        lead_to_feature_dataframe,
+        ECG_LEAD_NAMES,
+        parse_fc_parameters,
+    )
+
+    # https://github.com/awwong1/physionet-challenge-2020/blob/dd36e42e7803e7eb20e4bbaccbf4b29b57cf981d/neurokit2_parallel.py#L888
+    importances_fp = "physionet-challenge-2020/importances_rank.json"
+    limit_features_to = 1000
+    with open(importances_fp) as importancesfile:
+        importance_data = json.load(importancesfile)
+        important_fields = importance_data["sorted_keys"][:limit_features_to]
+        fc_parameters = parse_fc_parameters(important_fields)
+        fieldnames = [
+            "header_file",
+        ] + sorted(important_fields)
 
     def _engineer_features(idx):
-        raw_signal = root["raw/p_signal"][idx].reshape(
-            root["raw/p_signal_shape"][idx], order="C"
-        )
-        cleaned_signal = root["cleaned/p_signal"][idx].reshape(
-            root["raw/p_signal_shape"][idx], order="C"
-        )
-        age, sex, fs = root["raw/meta"][idx]
-
-        sig_len, num_leads = raw_signal.shape
-        record_features = joblib.Parallel(n_jobs=num_leads, verbose=0)(
-            joblib.delayed(lead_to_feature_dataframe)(
-                raw_signal[:, i], cleaned_signal[:, i], ECG_LEAD_NAMES[i], fs, None
+        try:
+            raw_signal = root["raw/p_signal"][idx].reshape(
+                root["raw/p_signal_shape"][idx], order="C"
             )
-            for i in range(num_leads)
-        )
-        df = pd.concat(
-            [pd.DataFrame({"age": (age,), "sex": (sex,)})] + record_features, axis=1
-        )
-        engineered_features[idx] = df.to_numpy()[0]
+            cleaned_signal = root["cleaned/p_signal"][idx].reshape(
+                root["raw/p_signal_shape"][idx], order="C"
+            )
+            age, sex, fs = root["raw/meta"][idx]
 
-    joblib.Parallel(n_jobs=16, verbose=1, backend="multiprocessing")(
-        joblib.delayed(_engineer_features)(idx)
-        for idx in range(len(record_files))
+            sig_len, num_leads = raw_signal.shape
+            record_features = joblib.Parallel(n_jobs=num_leads, verbose=0)(
+                joblib.delayed(lead_to_feature_dataframe)(
+                    raw_signal[:, i],
+                    cleaned_signal[:, i],
+                    ECG_LEAD_NAMES[i],
+                    fs,
+                    fc_parameters,
+                )
+                for i in range(num_leads)
+            )
+            df = pd.concat(
+                [pd.DataFrame({"age": (age,)})] + record_features, axis=1
+            )
+            engineered_features[idx] = df.to_numpy()[0]
+        except Exception as e:
+            raise Exception(e, idx)
+
+    joblib.Parallel(n_jobs=48, verbose=10, backend="multiprocessing")(
+        joblib.delayed(_engineer_features)(idx) for idx in range(len(record_files))
     )
 
 
