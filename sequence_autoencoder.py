@@ -592,7 +592,7 @@ if __name__ == "__main__":
     # ==== Callbacks ====
     # Custom logger output directory
     logger = pl.loggers.TensorBoardLogger(
-        save_dir=os.getcwd(), name="log_sequence_autoencoder"
+        save_dir=os.getcwd(), name="log_sequence_autoencoder_100_long"
     )
     # Early stopping on validation classification metric
     early_stopping = EarlyStopping(

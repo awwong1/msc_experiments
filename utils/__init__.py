@@ -1,10 +1,28 @@
 import os
 import re
+from contextlib import contextmanager
+from timeit import default_timer
 from typing import Iterable, List, Tuple, Union
 
 import numpy as np
 import scipy.signal as ss
 import torch.nn as nn
+
+
+@contextmanager
+def ElapsedTimer():
+    start_time = default_timer()
+
+    class _Timer:
+        start = start_time
+        end = default_timer()
+        duration = end - start
+
+    yield _Timer
+
+    end_time = default_timer()
+    _Timer.end = end_time
+    _Timer.duration = end_time - start_time
 
 
 class View(nn.Module):
