@@ -2,6 +2,7 @@ import os
 import re
 from typing import Iterable, List, Tuple, Union
 
+import scipy.signal as ss
 import numpy as np
 
 
@@ -73,40 +74,58 @@ def walk_files(
                 if prefix:
                     f = os.path.join(dirpath, f)
 
-                yield f
+                yield os.path.normpath(f)
 
 
-class RangeKeyDict:
+def clean_ecg_nk2(ecg_signal, sampling_rate=500):
+    """
+    Parallelized version of neurokit2 ecg_clean(method="neurokit")
+    ecg_signal shape should be (signal_length, number of leads)
+    """
+    # Remove slow drift with highpass Butterworth.
+    sos = ss.butter(
+        5,
+        (0.5,),
+        btype="highpass",
+        output="sos",
+        fs=sampling_rate,
+    )
+    clean = ss.sosfiltfilt(sos, ecg_signal, axis=0).T
+
+    # DC offset removal with 50hz powerline filter (convolve average kernel)
+    if sampling_rate >= 100:
+        b = np.ones(int(sampling_rate / 50))
+    else:
+        b = np.ones(2)
+    a = [
+        len(b),
+    ]
+    clean = np.copy(ss.filtfilt(b, a, clean, method="pad", axis=1).T)
+
+    return clean
+
+
+class RangeKeyDict(dict):
     """Custom 'dictionary' for reverse lookup of range
     """
-    def __init__(self, my_dict):
+    def __init__(self, *args, **kwargs):
+        super(RangeKeyDict, self).__init__(*args, **kwargs)
+
         # !any(!A or !B) is faster than all(A and B)
         assert not any(
             map(
                 lambda x: not isinstance(x, tuple) or len(x) != 2 or x[0] > x[1],
-                my_dict,
+                self,
             )
         )
 
-        def lte(bound):
-            return lambda x: bound <= x
-
-        def gt(bound):
-            return lambda x: x < bound
-
-        # generate the inner dict with tuple key like (lambda x: 0 <= x, lambda x: x < 100)
-        self._my_dict = {(lte(k[0]), gt(k[1])): v for k, v in my_dict.items()}
-
     def __getitem__(self, number):
-        from functools import reduce
-
-        _my_dict = self._my_dict
         try:
             result = next(
                 (
-                    _my_dict[key]
-                    for key in _my_dict
-                    if list(reduce(lambda s, f: filter(f, s), key, [number]))
+                    value
+                    for key, value in self.items()
+                    if key[0] <= number < key[1]
                 )
             )
         except StopIteration:
