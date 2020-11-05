@@ -7,3 +7,6 @@
 [submodule "dump_parser"]
 	path = dump_parser
 	url = https://git.udia.ca/alex/ecgml_research.git
+[submodule "PySierraECG"]
+	path = PySierraECG
+	url = https://github.com/awwong1/sierra-ecg-tools
